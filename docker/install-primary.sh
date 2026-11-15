@@ -17,6 +17,7 @@ usage() {
   --mail-domain NAME  邮箱域，默认 cloudmail.test
   --admin-email EMAIL 管理员邮箱，默认 admin@邮箱域
   --image IMAGE       指定官方 main、sha-提交号或 sha256 摘要镜像；始终从 GHCR 拉取
+  --reinstall         清空此实例的账号、邮件和配置后重新安装，不备份；未指定的站点参数沿用安装记录
   --help              显示帮助
 默认拉取 GitHub main 最新通过检查的镜像，需要服务器可访问 ghcr.io。
 自动安装 Docker、生成独立密钥和管理员密码、启动主节点管理服务。
@@ -36,6 +37,8 @@ primary_admin_email=''
 primary_image_ref="$primary_image_repository:main"
 primary_image_digest=''
 primary_image_revision=''
+primary_reinstall=false
+primary_reinstall_instance=''
 declare -A primary_explicit=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --image) primary_image_ref=$2 ;;
       esac
       shift 2 ;;
+    --reinstall) primary_reinstall=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail "未知参数：$1。请执行 --help 查看用法。" ;;
   esac
@@ -138,7 +142,19 @@ restore_parameter() {
   printf -v "$primary_variable" '%s' "$primary_saved"
 }
 
-if [[ -e $primary_state || -L $primary_state ]]; then
+if [[ $primary_reinstall == true && ( -e $primary_state || -L $primary_state ) ]]; then
+  [[ -f $primary_state && ! -L $primary_state && -f $primary_env && ! -L $primary_env ]] || fail '无法确认重装实例的配置和安装记录，已停止。'
+  [[ $(read_state INSTALL_DIR) == "$primary_dir" && $(read_state CONTAINER_NAME) == "$primary_name" ]] || fail '重装目录或容器名与安装记录不一致，已停止。'
+  primary_reinstall_instance=$(read_state INSTANCE_ID)
+  [[ $primary_reinstall_instance =~ ^[0-9a-f]{32}$ ]] || fail '重装实例的安装身份无效，已停止。'
+  # Keep site choices unless explicitly replaced; credentials and data are always new.
+  for primary_parameter in HTTP_PORT:primary_port:port HOST_ADDRESS:primary_host:host APP_URL:primary_app_url:app_url MAIL_DOMAIN:primary_mail_domain:mail_domain ADMIN_EMAIL:primary_admin_email:admin_email; do
+    IFS=: read -r primary_key primary_variable primary_option <<< "$primary_parameter"
+    if [[ ${primary_explicit[$primary_option]:-false} != true ]]; then
+      printf -v "$primary_variable" '%s' "$(read_state "$primary_key")"
+    fi
+  done
+elif [[ -e $primary_state || -L $primary_state ]]; then
   [[ -f $primary_state && ! -L $primary_state && -f $primary_env && ! -L $primary_env ]] || fail '已有安装状态或配置异常，已停止。'
   primary_state_format=$(read_state FORMAT)
   [[ $primary_state_format == 1 || $primary_state_format == 2 ]] || fail '不支持该安装状态版本。'
@@ -168,6 +184,9 @@ else
     [[ -z $(ls -A "$primary_dir") ]] || fail '安装目录已有文件，无法确认归属。请选择新的 --dir；原文件未修改。'
   elif [[ -e $primary_dir ]]; then fail '安装路径已被其他文件占用。'; fi
 fi
+
+[[ $primary_port =~ ^[0-9]{1,5}$ ]] && (( 10#$primary_port >= 1 && 10#$primary_port <= 65535 )) || fail '端口必须为 1 到 65535 的整数。'
+primary_port=$((10#$primary_port))
 
 valid_domain() {
   local primary_domain=$1 primary_label
@@ -217,6 +236,39 @@ fi
 primary_container=$primary_name
 primary_volume="$primary_name-data"
 
+validate_reinstallation() {
+  primary_remove_container=false
+  primary_remove_volume=false
+  if docker volume inspect "$primary_volume" >/dev/null 2>&1; then
+    primary_volume_instance=$(docker volume inspect --format '{{index .Labels "cloud-mail.installation-id"}}' "$primary_volume")
+    [[ $primary_volume_instance == "$primary_reinstall_instance" ]] || fail '数据卷不属于本次安装，拒绝清空。'
+    primary_remove_volume=true
+    primary_volume_users=$(docker ps -a --filter "volume=$primary_volume" --format '{{.Names}}')
+    while IFS= read -r primary_volume_user; do
+      [[ -z $primary_volume_user || $primary_volume_user == "$primary_container" ]] || fail "数据卷还被其他容器使用：$primary_volume_user，已停止。"
+    done <<< "$primary_volume_users"
+  fi
+  if docker container inspect "$primary_container" >/dev/null 2>&1; then
+    primary_container_mount=$(docker container inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}:{{.Name}}{{end}}{{end}}' "$primary_container")
+    primary_container_instance=$(docker container inspect --format '{{index .Config.Labels "cloud-mail.installation-id"}}' "$primary_container")
+    [[ $primary_remove_volume == true && $primary_container_mount == "volume:$primary_volume" ]] || fail '容器的数据挂载与本次安装不一致，拒绝清空。'
+    if [[ $primary_container_instance != "$primary_reinstall_instance" ]]; then
+      # Manual image updates may have omitted installer labels. Accept only the
+      # official image attached to the original, still-labelled data volume.
+      [[ -z $primary_container_instance || $primary_container_instance == '<no value>' ]] || fail '同名容器属于其他安装，已停止。'
+      primary_container_image=$(docker container inspect --format '{{.Image}}' "$primary_container")
+      primary_container_source=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "$primary_container_image")
+      [[ $primary_container_source == https://github.com/lsh-okok/cloud-mail ]] || fail '同名容器不是官方 Cloud Mail 镜像，已停止。'
+    fi
+    primary_remove_container=true
+  fi
+  if [[ -n $(ss -H -ltn "sport = :$primary_port") ]]; then
+    [[ $primary_remove_container == true ]] || fail "端口 $primary_port 已被其他服务占用，已停止。"
+    primary_container_ports=$(docker container inspect --format '{{range (index .HostConfig.PortBindings "3000/tcp")}}{{println .HostPort}}{{end}}' "$primary_container")
+    awk -v expected="$primary_port" '$0==expected {found=1} END {exit !found}' <<< "$primary_container_ports" || fail "端口 $primary_port 不属于此实例，已停止。"
+  fi
+}
+
 if [[ $primary_first_install == false ]]; then
   docker container inspect "$primary_container" >/dev/null 2>&1 || fail '已有安装的容器缺失，已停止；请保留原卷和配置后人工恢复。'
   primary_existing_instance=$(docker container inspect --format '{{index .Config.Labels "cloud-mail.installation-id"}}' "$primary_container")
@@ -231,9 +283,13 @@ if [[ $primary_first_install == false ]]; then
   printf '%s\n' '正在启动已有主节点，保留原配置和数据…'
   docker start "$primary_container" >/dev/null
 else
-  if docker container inspect "$primary_container" >/dev/null 2>&1; then fail '同名容器已存在，请换一个 --name；不会覆盖已有服务。'; fi
-  if docker volume inspect "$primary_volume" >/dev/null 2>&1; then fail '同名数据卷已存在，请换一个 --name；不会接管旧数据。'; fi
-  [[ -z $(ss -H -ltn "sport = :$primary_port") ]] || fail "端口 $primary_port 已被占用，请用 --port 指定空闲端口。"
+  if [[ -n $primary_reinstall_instance ]]; then
+    validate_reinstallation
+  else
+    if docker container inspect "$primary_container" >/dev/null 2>&1; then fail '同名容器已存在，请换一个 --name；不会覆盖已有服务。'; fi
+    if docker volume inspect "$primary_volume" >/dev/null 2>&1; then fail '同名数据卷已存在，请换一个 --name；不会接管旧数据。'; fi
+    [[ -z $(ss -H -ltn "sport = :$primary_port") ]] || fail "端口 $primary_port 已被占用，请用 --port 指定空闲端口。"
+  fi
   printf '正在从 GHCR 拉取 GitHub 镜像：%s\n' "$primary_image_ref"
   primary_temporary=$(mktemp -d "${TMPDIR:-/tmp}/cloud-mail-primary.XXXXXX")
   if ! docker pull "$primary_image_ref" > "$primary_temporary/pull.log" 2>&1; then
@@ -264,6 +320,19 @@ else
   primary_jwt_secret=$(openssl rand -hex 32)
   primary_data_key=$(openssl rand -hex 32)
   [[ $primary_instance_id =~ ^[0-9a-f]{32}$ && $primary_admin_password =~ ^[0-9a-f]{48}$ && $primary_jwt_secret =~ ^[0-9a-f]{64}$ && $primary_data_key =~ ^[0-9a-f]{64}$ ]] || fail '无法生成安装所需的安全随机密钥。'
+  if [[ -n $primary_reinstall_instance ]]; then
+    # Recheck ownership after the download, before removing any existing data.
+    validate_reinstallation
+    printf '正在清空重装：容器 %s，数据卷 %s。原账号、邮件和配置将删除，不执行备份。\n' "$primary_container" "$primary_volume"
+    if [[ $primary_remove_container == true ]]; then
+      docker stop -t 60 "$primary_container" >/dev/null
+      docker rm "$primary_container" >/dev/null
+    fi
+    if [[ $primary_remove_volume == true ]]; then docker volume rm "$primary_volume" >/dev/null; fi
+    # Remove only installer-owned configuration; other files in this directory
+    # may include the running script or unrelated user files.
+    rm -f -- "$primary_env" "$primary_state" "$primary_dir/.install-state.tmp"
+  fi
   mkdir -p "$primary_dir"
   chmod 700 "$primary_dir"
   cat > "$primary_env" <<ENV

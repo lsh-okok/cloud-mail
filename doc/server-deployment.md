@@ -30,6 +30,14 @@ GitHub Actions 在 `main` 通过后端测试、前后端构建、部署检查和
 
 同一安装重复运行只启动原容器，保留原镜像、配置与数据，不执行升级；已有源码版安装也不会被自动转换。不同参数、同名外部容器或已有其他数据卷会拒绝覆盖。请保管安装目录中的配置、`.install-state` 版本记录以及数据卷备份。本脚本位于本项目的 `docker/install-primary.sh`，公共发布路径为 `ok-email-scripts/cloud-mail-primary/install-primary.sh`。
 
+需要清空旧数据重新部署时，在同一脚本添加 `--reinstall`：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/install-primary.sh -o install-primary.sh && bash install-primary.sh --reinstall --host mail.example.com --app-url https://mail.example.com --mail-domain example.com --admin-email admin@example.com
+```
+
+`--reinstall` 会永久删除该实例的账号、邮箱、邮件和配置，不执行备份；生成新的管理员密码和密钥。脚本先验证安装记录、容器和数据卷的归属，拉取并校验新镜像后才停止旧容器、删除该实例的数据卷并安装。未指定的站点地址、邮箱域和端口沿用安装记录，可通过参数覆盖。手动更新时遗漏容器标签的官方镜像，只要仍挂载原有且身份匹配的数据卷，也可重装。其他容器、数据卷及安装目录中的其他文件保持原样。普通安装不带 `--reinstall`，继续保留已有数据。
+
 ## 1. 准备服务器与域名
 
 需要 Docker Engine、Docker Compose v2、一个已运行的 NPM、固定公网 IPv4，以及域名 DNS 管理权限。服务器厂商必须允许**入站和出站 TCP 25**；Web 端口 80/443 继续由 NPM 使用。防火墙开放入站 25，不开放 3000、2525、10040、10041 或 587。当前 MTA 默认仅使用 IPv4。

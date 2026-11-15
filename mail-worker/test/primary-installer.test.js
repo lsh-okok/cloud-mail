@@ -22,7 +22,7 @@ function fixture() {
   mock('uname', `if [ "\${1:-}" = -m ]; then
   if [ -f "$PRIMARY_INSTALL_TEST_ROOT/unsupported-arch" ]; then printf aarch64; else printf x86_64; fi
 else printf Linux; fi\n`);
-  mock('ss', 'exit 0\n');
+  mock('ss', '[ ! -f "$PRIMARY_INSTALL_TEST_ROOT/port-busy" ] || printf "LISTEN 0 128 *:13010\\n"\n');
   mock('sleep', 'exit 0\n');
   mock('date', `primary_test_time=0
 if [ -f "$PRIMARY_INSTALL_TEST_ROOT/clock" ]; then primary_test_time=$(cat "$PRIMARY_INSTALL_TEST_ROOT/clock"); fi
@@ -35,7 +35,7 @@ printf '%s\\n' "$(( primary_test_time + 20 ))" > "$PRIMARY_INSTALL_TEST_ROOT/clo
   mock('docker', `printf '%s\\n' "$*" >> "$PRIMARY_INSTALL_TEST_ROOT/docker.log"
 case "$1" in
   info) exit 0 ;;
-  ps) exit 0 ;;
+  ps) if [ -f "$PRIMARY_INSTALL_TEST_ROOT/shared-volume" ]; then printf 'another-project\\n'; fi ;;
   pull)
     [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/pull-failed" ] || exit 1
     touch "$PRIMARY_INSTALL_TEST_ROOT/image-present"
@@ -55,7 +55,9 @@ case "$1" in
     [ -f "$PRIMARY_INSTALL_TEST_ROOT/container-present" ] || exit 1
     if [ "\${3:-}" = --format ]; then
       case "$4" in
-        *installation-id*) cat "$PRIMARY_INSTALL_TEST_ROOT/container-id" ;;
+        *installation-id*)
+          if [ -f "$PRIMARY_INSTALL_TEST_ROOT/wrong-container-identity" ]; then printf other-installation;
+          elif [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/manual-recreation" ]; then cat "$PRIMARY_INSTALL_TEST_ROOT/container-id"; fi ;;
         *cloud-mail.role*) printf primary ;;
         *PortBindings*) printf '13010\\n' ;;
         *Mounts*) if [ -f "$PRIMARY_INSTALL_TEST_ROOT/wrong-mount" ]; then printf 'bind:/other/data'; else printf 'volume:installer-test-data'; fi ;;
@@ -78,6 +80,9 @@ case "$1" in
         done
         touch "$PRIMARY_INSTALL_TEST_ROOT/volume-present"
         printf 'installer-test-data\\n' ;;
+      rm)
+        [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/container-present" ] || exit 98
+        rm -f "$PRIMARY_INSTALL_TEST_ROOT/volume-present" "$PRIMARY_INSTALL_TEST_ROOT/volume-id" "$PRIMARY_INSTALL_TEST_ROOT/user-data" ;;
       *) exit 98 ;;
     esac ;;
   build|load) exit 98 ;;
@@ -89,6 +94,12 @@ case "$1" in
     touch "$PRIMARY_INSTALL_TEST_ROOT/container-present"
     printf 'fixture-container-id\\n' ;;
   start) exit 0 ;;
+  stop)
+    [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/stop-failed" ] || exit 1
+    touch "$PRIMARY_INSTALL_TEST_ROOT/container-stopped" ;;
+  rm)
+    [ -f "$PRIMARY_INSTALL_TEST_ROOT/container-stopped" ] || exit 98
+    rm -f "$PRIMARY_INSTALL_TEST_ROOT/container-present" "$PRIMARY_INSTALL_TEST_ROOT/container-id" "$PRIMARY_INSTALL_TEST_ROOT/container-stopped" ;;
   exec) [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/not-ready" ] ;;
   logs) printf 'fixture log\\n' ;;
   *) exit 98 ;;
@@ -168,6 +179,87 @@ describe('primary node installer', () => {
     expect(changed.status).toBe(1);
     expect(changed.stdout + changed.stderr).toContain('不执行升级');
     expect(f.config()).toBe(before);
+  });
+
+  it('reinstalls with fresh credentials and data after validating the image, and preserves unrelated files', () => {
+    const f = fixture();
+    expect(f.execute(['--mail-domain', 'example.com', '--admin-email', 'owner@example.com', '--app-url', 'https://mx.example.com']).status).toBe(0);
+    const before = f.env(), beforeLog = f.log();
+    writeFileSync(join(f.root, 'installed', 'keep-user-file'), 'unrelated');
+    writeFileSync(join(f.root, 'user-data'), 'old database and mail');
+    const result = f.execute(['--reinstall']);
+    expect(result.status, result.stderr).toBe(0);
+    const env = f.env(), operations = f.log().slice(beforeLog.length);
+    expect(env.APP_URL).toBe('https://mx.example.com');
+    expect(env.ADMIN_EMAIL).toBe('owner@example.com');
+    expect(env.MAIL_DOMAINS).toBe('example.com');
+    for (const key of ['ADMIN_PASSWORD', 'JWT_SECRET', 'DATA_ENCRYPTION_KEY']) expect(env[key]).not.toBe(before[key]);
+    expect(existsSync(join(f.root, 'user-data'))).toBe(false);
+    expect(readFileSync(join(f.root, 'installed', 'keep-user-file'), 'utf8')).toBe('unrelated');
+    expect(operations.indexOf(`pull ${imageRef}`)).toBeLessThan(operations.indexOf('stop -t 60 installer-test'));
+    expect(operations.indexOf('stop -t 60 installer-test')).toBeLessThan(operations.indexOf('rm installer-test\n'));
+    expect(operations.indexOf('rm installer-test\n')).toBeLessThan(operations.indexOf('volume rm installer-test-data'));
+    expect(operations.indexOf('volume rm installer-test-data')).toBeLessThan(operations.indexOf('volume create '));
+    expect(operations).not.toMatch(/rm -f|prune|backup/);
+    expect(result.stdout).toContain('不执行备份');
+    expect(result.stdout).toContain(env.ADMIN_PASSWORD);
+    expect(f.execute().status).toBe(0);
+  });
+
+  it('allows reinstalling an official manually recreated container on its original labelled volume', () => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    f.mark('manual-recreation'); f.mark('port-busy');
+    const result = f.execute(['--reinstall', '--mail-domain', 'example.com', '--admin-email', 'admin@example.com', '--app-url', 'https://mx.example.com']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(f.env().ADMIN_EMAIL).toBe('admin@example.com');
+    expect(f.env().APP_URL).toBe('https://mx.example.com');
+    expect(f.log()).toContain('stop -t 60 installer-test');
+  });
+
+  it('accepts reinstall for a first installation without deleting anything', () => {
+    const f = fixture(), result = f.execute(['--reinstall']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(f.log()).not.toMatch(/^(?:stop|rm|volume rm) /m);
+  });
+
+  it.each(['pull-failed', 'invalid-pull-digest', 'missing-digest', 'bad-revision', 'wrong-source'])('preserves the old installation when the new reinstall image fails validation: %s', marker => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    const before = f.config(), beforeLog = f.log();
+    writeFileSync(join(f.root, 'user-data'), 'keep'); f.mark(marker);
+    const result = f.execute(['--reinstall']);
+    expect(result.status).toBe(1);
+    expect(f.config()).toBe(before);
+    expect(readFileSync(join(f.root, 'user-data'), 'utf8')).toBe('keep');
+    expect(f.log().slice(beforeLog.length)).not.toMatch(/^(?:stop|rm|volume rm|run|volume create) /m);
+  });
+
+  it.each(['wrong-mount', 'wrong-container-identity', 'wrong-volume-identity', 'shared-volume'])('refuses to clear resources belonging to another installation: %s', marker => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    const before = f.config(), beforeLog = f.log(); f.mark(marker);
+    const result = f.execute(['--reinstall']);
+    expect(result.status).toBe(1);
+    expect(f.config()).toBe(before);
+    expect(f.log().slice(beforeLog.length)).not.toMatch(/^(?:stop|rm|volume rm|run|volume create) /m);
+  });
+
+  it('does not delete data or configuration if stopping the old service fails', () => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    const before = f.config(), beforeLog = f.log(); f.mark('stop-failed');
+    const result = f.execute(['--reinstall']);
+    expect(result.status).toBe(1);
+    expect(f.config()).toBe(before);
+    expect(existsSync(join(f.root, 'volume-present'))).toBe(true);
+    expect(f.log().slice(beforeLog.length)).not.toMatch(/^(?:rm|volume rm|run|volume create) /m);
+  });
+
+  it('refuses to clear a mismatched installation directory or container name', () => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    const before = f.config(), beforeLog = f.log();
+    expect(f.execute(['--reinstall', '--name', 'another-project']).status).toBe(1);
+    writeFileSync(join(f.root, 'installed', '.install-state'), f.state().replace(/^INSTALL_DIR=.*$/m, 'INSTALL_DIR=/somewhere-else'));
+    expect(f.execute(['--reinstall']).status).toBe(1);
+    expect(f.config()).toBe(before);
+    expect(f.log().slice(beforeLog.length)).not.toMatch(/^(?:stop|rm|volume rm|run|volume create) /m);
   });
 
   it.each(['pull-failed', 'invalid-pull-digest', 'missing-digest', 'bad-revision', 'wrong-source'])('refuses incomplete or unverifiable registry images before creating data: %s', marker => {
