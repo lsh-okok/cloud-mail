@@ -5,7 +5,7 @@ import { recordFeatureChange } from '../shared/events.js';
 import { matchesPlatform, matchesRecipient, normalizeEmail, recipientAddresses } from './matching.js';
 import { assertReplicaReady, nodeRole } from '../nodes/access.js';
 import { activeDomains, knownDomains } from '../domains/service.js';
-import { isSuperAdmin } from '../administrators/service.js';
+import { hasAdministratorTable, isSuperAdmin } from '../administrators/service.js';
 
 export { matchesPlatform, matchesRecipient, normalizeEmail } from './matching.js';
 const PROVIDERS = ['mx'];
@@ -80,7 +80,10 @@ export function saveSourceMailbox(env, data, { id, actorId = null, requestId = '
     const revision = positiveInt(data.revision, 'revision');
     if (revision !== current.revision) throw new FeatureError(409, 'REVISION_CONFLICT', 'The source mailbox changed. Reload it before saving.');
   } else if (data.revision !== undefined) throw new FeatureError(400, 'INVALID_PARAMETER', 'New source mailboxes do not accept a revision.');
-  id ||= randomUUID();
+  return persistSourceMailbox(env, value, { id, current, actorId, requestId });
+}
+
+function persistSourceMailbox(env, value, { id = randomUUID(), current = null, actorId = null, requestId = '' } = {}) {
   try {
     return env.db.transaction(() => {
       const now = Date.now();
@@ -109,6 +112,54 @@ export function saveSourceMailbox(env, data, { id, actorId = null, requestId = '
     if (error.code?.startsWith('SQLITE_CONSTRAINT_UNIQUE')) throw new FeatureError(409, 'MAILBOX_EXISTS', 'This provider already has a source mailbox with the same address.');
     throw error;
   }
+}
+
+function retireOrphanedLocalSource(env, source, { actorId, requestId }) {
+  if (source.local_account_id == null || env.db.prepare('SELECT 1 FROM account WHERE account_id=?').get(source.local_account_id)) return false;
+  // A physically deleted mailbox's public access must never transfer to a new
+  // account that later reuses the same address, even when its owner is an admin.
+  for (const link of env.db.prepare('SELECT id,revision FROM mail_link WHERE mailbox_id=?').all(source.id)) {
+    recordFeatureChange(env.db, { objectType: 'link', objectId: link.id, revision: link.revision + 1, payload: { deleted: true } });
+  }
+  env.db.prepare('DELETE FROM source_mailbox WHERE id=?').run(source.id);
+  recordFeatureChange(env.db, { objectType: 'mailbox', objectId: source.id, revision: source.revision + 1, payload: { deleted: true } });
+  appendAudit(env.db, { actorId, action: 'mailbox.retire', objectType: 'mailbox', objectId: source.id, requestId });
+  return true;
+}
+
+// The inbox account is authoritative for ownership and receiving lifecycle.
+// Missing source settings are added once; existing identities, scopes, disabled
+// states and recipient links survive reconciliation for the same account.
+export function synchronizeLocalMailboxSources(env, { userId, actorId = null, requestId = '' } = {}) {
+  if (nodeRole(env) !== 'primary') return [];
+  const administratorTable = hasAdministratorTable(env);
+  const ownerFilter = administratorTable
+    ? 'EXISTS (SELECT 1 FROM site_administrator admin WHERE admin.user_id=a.user_id)'
+    : 'u.email=? COLLATE NOCASE';
+  const params = administratorTable ? [] : [env.admin || ''];
+  if (userId !== undefined) params.push(positiveInt(userId, 'userId'));
+  return env.db.transaction(() => {
+    const allowedDomains = new Set(knownDomains(env));
+    const accounts = env.db.prepare(`SELECT a.account_id,a.user_id,a.email FROM account a
+      JOIN user u ON u.user_id=a.user_id
+      WHERE a.status=0 AND a.is_del=0 AND u.status=0 AND u.is_del=0 AND ${ownerFilter}
+      ${userId === undefined ? '' : 'AND a.user_id=?'}
+      AND NOT EXISTS (SELECT 1 FROM source_mailbox m WHERE m.provider='mx' AND m.email=a.email COLLATE NOCASE
+        AND (m.local_account_id IS NULL OR EXISTS (SELECT 1 FROM account original WHERE original.account_id=m.local_account_id)))
+      ORDER BY a.account_id`).all(...params);
+    const created = [];
+    for (const account of accounts) {
+      const email = normalizeEmail(account.email);
+      if (!email || !allowedDomains.has(email.split('@')[1])) continue;
+      // Imported historical addresses can normalize to an existing source.
+      const existing = env.db.prepare("SELECT * FROM source_mailbox WHERE provider='mx' AND email=? COLLATE NOCASE").get(email);
+      const audit = { actorId: actorId ?? account.user_id, requestId };
+      if (existing && !retireOrphanedLocalSource(env, existing, audit)) continue;
+      created.push(persistSourceMailbox(env, { email, provider: 'mx', enabled: true,
+        localAccountId: account.account_id, mxDomain: null }, audit));
+    }
+    return created;
+  }).immediate();
 }
 
 export function createLocalSourceMailbox(env, data, { actorId, requestId = '' } = {}) {
@@ -143,6 +194,8 @@ export function createLocalSourceMailbox(env, data, { actorId, requestId = '' } 
       const created = env.db.prepare('INSERT INTO account(email,name,user_id) VALUES(?,?,?)').run(email, prefix, actorId);
       account = { account_id: Number(created.lastInsertRowid) };
     }
+    const existing = env.db.prepare("SELECT * FROM source_mailbox WHERE provider='mx' AND email=? COLLATE NOCASE").get(email);
+    if (existing) retireOrphanedLocalSource(env, existing, { actorId, requestId });
     const { createLocalAccount, ...source } = data;
     return saveSourceMailbox(env, { ...source, email, localAccountId: account.account_id }, { actorId, requestId });
   }).immediate();
@@ -189,7 +242,10 @@ export function createLocalSourceMailboxBatch(env, input, { actorId, requestId =
         if (account && (account.user_id !== actorId || account.status || account.is_del)) {
           throw new FeatureError(409, 'LOCAL_ACCOUNT_UNAVAILABLE', BATCH_ERROR_MESSAGES.LOCAL_ACCOUNT_UNAVAILABLE);
         }
-        const existing = env.db.prepare("SELECT * FROM source_mailbox WHERE provider='mx' AND email=? COLLATE NOCASE").get(email);
+        let existing = env.db.prepare("SELECT * FROM source_mailbox WHERE provider='mx' AND email=? COLLATE NOCASE").get(email);
+        // Recreating a physically deleted account gets a new public identity;
+        // let the normal creation transaction retire the orphaned source.
+        if (existing?.local_account_id != null && !env.db.prepare('SELECT 1 FROM account WHERE account_id=?').get(existing.local_account_id)) existing = null;
         if (existing) {
           if (existing.local_account_id != null && (!account || existing.local_account_id !== account.account_id)) {
             throw new FeatureError(409, 'INVALID_LOCAL_ACCOUNT', BATCH_ERROR_MESSAGES.INVALID_LOCAL_ACCOUNT);
@@ -238,7 +294,11 @@ export function mountSourceRoutes(router) {
     if (q.length > 320) throw new FeatureError(400, 'INVALID_PARAMETER', 'The mailbox search is too long.');
     const provider = c.req.query('provider');
     if (provider && provider !== 'mx') throw new FeatureError(400, 'UNSUPPORTED_PROVIDER', 'Only local MX receiving sources are supported.');
-    let where = "WHERE provider='mx' AND instr(lower(email),lower(?)) > 0";
+    // Deleted inbox accounts disappear from both directories. Keep their source
+    // configuration intact so restoring an account also restores its identity.
+    let where = `WHERE provider='mx' AND instr(lower(email),lower(?)) > 0
+      AND (local_account_id IS NULL OR EXISTS (SELECT 1 FROM account a
+        WHERE a.account_id=source_mailbox.local_account_id AND a.email=source_mailbox.email COLLATE NOCASE AND a.is_del=0))`;
     const params = [q];
     const exactEmail = c.req.query('email');
     if (exactEmail !== undefined) {
@@ -247,8 +307,13 @@ export function mountSourceRoutes(router) {
       where += ' AND email=? COLLATE NOCASE';
       params.push(email);
     }
+    synchronizeLocalMailboxSources(c.env, { actorId: c.get('featureAdmin').userId, requestId: c.get('requestId') });
     const total = c.env.db.prepare(`SELECT count(*) AS total FROM source_mailbox ${where}`).get(...params).total;
-    const items = c.env.db.prepare(`SELECT * FROM source_mailbox ${where} ORDER BY email,id LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize).map(sourceDto);
+    const items = c.env.db.prepare(`SELECT *,
+      (SELECT CASE WHEN a.status=0 AND u.status=0 AND u.is_del=0 THEN 'active' ELSE 'disabled' END
+        FROM account a JOIN user u ON u.user_id=a.user_id WHERE a.account_id=source_mailbox.local_account_id) AS local_account_status
+      FROM source_mailbox ${where} ORDER BY email,id LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize)
+      .map(row => ({ ...sourceDto(row), localAccountStatus: row.local_account_status ?? null }));
     return c.json({ data: { items, total, page, pageSize,
       capabilities: { providers: PROVIDERS, linkEncryption: !!c.env.secretVault } } });
   });

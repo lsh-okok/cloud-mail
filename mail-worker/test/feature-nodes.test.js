@@ -76,7 +76,10 @@ async function fixture({ role = 'primary', primary, node, prefix = '', root: exi
 async function pair({ prefix = '', accountScope = false } = {}) {
   const p = await fixture({ prefix }); p.start();
   const account = p.env.db.prepare('SELECT account_id FROM account WHERE email=?').get(p.config.admin);
-  const source = await p.source(accountScope ? { email: p.config.admin, localAccountId: account.account_id, mxDomain: null } : {});
+  const source = accountScope
+    ? (await p.ok(`/admin/mailboxes?email=${encodeURIComponent(p.config.admin)}`)).items[0]
+    : await p.source();
+  if (accountScope) expect(source).toMatchObject({ email: p.config.admin, localAccountId: account.account_id, mxDomain: null });
   const links = (await p.links(source.id, ['a1@example.com', 'a2@example.com'])).items;
   const node = await p.createNode();
   const r = await fixture({ role: 'replica', primary: p, node, prefix: prefix ? '/edge' : '' }); r.start();
@@ -218,7 +221,7 @@ describe('independent MX replica nodes', () => {
     expect(list.summary).toMatchObject({ total: 1, online: 0, ready: 0 });
     expect(JSON.stringify(list)).not.toContain(node.credential);
     expect(JSON.stringify(list)).not.toContain(stored.credential_digest);
-    const heartbeat = () => p.internal(node, 'heartbeat', { method: 'POST', data: { cursor: 0, ready: true } });
+    const heartbeat = () => p.internal(node, 'heartbeat', { method: 'POST', data: { cursor: primaryCursor(p.env.db), ready: true } });
     expect((await heartbeat()).status).toBe(200);
     expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({ online: true, ready: true, ip: '172.18.0.5' });
     for (let i = 0; i < 2; i++) expect(await p.ok(`/admin/nodes/${node.node.id}/status`, { method: 'PUT', data: { disabled: true } })).toMatchObject({ disabled: true, online: false, ready: false });
@@ -237,8 +240,9 @@ describe('independent MX replica nodes', () => {
 
   it('keeps online separate from readiness and ignores forged IP or unauthorized heartbeats', async () => {
     const p = await fixture(), node = await p.createNode();
+    const baseline = primaryCursor(p.env.db);
     await p.source();
-    const body = { cursor: 0, ready: false, snapshotCompleted: 0, snapshotTotal: 1 };
+    const body = { cursor: baseline, ready: false, snapshotCompleted: 0, snapshotTotal: 2 };
     const before = p.env.db.prepare('SELECT * FROM cluster_node').get();
     const denied = await p.internal({ ...node, credential: randomBytes(32).toString('base64url') }, 'heartbeat', { method: 'POST', data: body });
     expect(denied.status).toBe(401);
@@ -270,13 +274,16 @@ describe('independent MX replica nodes', () => {
     const stored = p.env.db.prepare('SELECT envelope FROM node_snapshot_page').get().envelope;
     expect(stored).not.toContain('a1@example.com');
     const page = (await (await p.internal(node, `snapshot/${snapshot.sessionId}?page=0`)).json()).data;
-    expect(page.items.map(item => item.type)).toEqual(['mailbox', 'link', 'settings']);
+    expect(page.items.map(item => item.type)).toEqual(['mailbox', 'mailbox', 'link', 'settings']);
+    expect(page.items.filter(item => item.type === 'mailbox').map(item => item.data.email).sort())
+      .toEqual(['a@example.com', p.config.admin].sort());
     const text = JSON.stringify(page);
     const secret = p.env.secretVault.decrypt(p.env.db.prepare('SELECT token_encrypted FROM mail_link WHERE id=?').get(link.id).token_encrypted, `mail-link:${link.id}`);
     expect(text).not.toContain('token_encrypted'); expect(text).not.toContain(secret);
     expect(text).not.toContain(p.env.jwt_secret); expect(text).not.toContain(p.env.admin_password); expect(text).not.toContain('source_secret');
     saveSourceMailbox(p.env, { email: 'new-main@example.com', revision: source.revision }, { id: source.id });
-    expect((await (await p.internal(node, `snapshot/${snapshot.sessionId}?page=0`)).json()).data.items[0].data.email).toBe('a@example.com');
+    const fixed = (await (await p.internal(node, `snapshot/${snapshot.sessionId}?page=0`)).json()).data;
+    expect(fixed.items.find(item => item.type === 'mailbox' && item.id === source.id).data.email).toBe('a@example.com');
     expect((await p.internal(other, `snapshot/${snapshot.sessionId}?page=0`)).status).toBe(409);
     p.env.nodeState.bootId = randomUUID();
     expect((await p.internal(node, `snapshot/${snapshot.sessionId}?page=0`)).status).toBe(409);
@@ -303,7 +310,7 @@ describe('independent MX replica nodes', () => {
     expect(resumed.env.nodeState.ready, JSON.stringify(resumed.env.db.prepare('SELECT * FROM node_replica_state').get())).toBe(true);
     expect(p.env.db.prepare('SELECT id FROM node_snapshot WHERE node_id=?').get(node.node.id).id).toBe(session);
     expect(resumed.env.db.prepare('SELECT count(*) AS n FROM mail_link').get().n).toBe(5001);
-    expect(resumed.env.db.prepare('SELECT email FROM source_mailbox').get().email).toBe('updated-main@example.com');
+    expect(resumed.env.db.prepare('SELECT email FROM source_mailbox WHERE id=?').get(source.id).email).toBe('updated-main@example.com');
     expect(resumed.env.db.prepare('SELECT count(*) AS n FROM node_replica_staging').get().n).toBe(0);
   });
 
@@ -333,22 +340,23 @@ describe('independent MX replica nodes', () => {
     expect(primaryCursor(p.env.db)).toBe(head);
     expect((await p.internal(node, `events?after=${old}`)).status).toBe(409);
     await r.stop.tick(); expect(r.env.nodeState.ready).toBe(true);
-    expect(r.env.db.prepare('SELECT email FROM source_mailbox').get().email).toBe('new-main@example.com');
+    expect(r.env.db.prepare('SELECT email FROM source_mailbox WHERE id=?').get(source.id).email).toBe('new-main@example.com');
   });
 
   it('bounds continuous increment responses by bytes before the 500-event ceiling', async () => {
     const p = await fixture(), node = await p.createNode();
+    const baseline = primaryCursor(p.env.db);
     const large = { name: 'Large platform', emails: [], domains: [], keywords: Array.from({ length: 1000 }, () => 'x'.repeat(300)) };
     p.env.db.transaction(() => {
       for (let i = 0; i < 80; i++) recordFeatureChange(p.env.db, { objectType: 'platform', objectId: `large-${i}`, revision: 1, payload: large });
     }).immediate();
-    const response = await p.internal(node, 'events?after=0');
+    const response = await p.internal(node, `events?after=${baseline}`);
     const text = await response.text(), batch = JSON.parse(text).data;
     expect(response.status).toBe(200);
     expect(Buffer.byteLength(text)).toBeLessThan(17 * 1024 * 1024);
     expect(batch.events.length).toBeGreaterThan(1); expect(batch.events.length).toBeLessThan(80);
-    expect(batch.events.map(event => event.cursor)).toEqual(Array.from({ length: batch.events.length }, (_, index) => index + 1));
-    expect(batch.cursor).toBe(batch.events.length); expect(batch.hasMore).toBe(true);
+    expect(batch.events.map(event => event.cursor)).toEqual(Array.from({ length: batch.events.length }, (_, index) => baseline + index + 1));
+    expect(batch.cursor).toBe(baseline + batch.events.length); expect(batch.hasMore).toBe(true);
     const next = (await (await p.internal(node, `events?after=${batch.cursor}`)).json()).data;
     expect(next.events[0].cursor).toBe(batch.cursor + 1); expect(next.hasMore).toBe(false);
   });

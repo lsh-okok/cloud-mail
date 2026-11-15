@@ -1,5 +1,4 @@
 import BizError from '../error/biz-error';
-import verifyUtils from '../utils/verify-utils';
 import emailUtils from '../utils/email-utils';
 import userService from './user-service';
 import emailService from './email-service';
@@ -14,6 +13,17 @@ import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
 import { activeDomains } from '../modules/domains/service.js';
 import { isAdministrator, isSuperAdmin } from '../modules/administrators/service.js';
+import { normalizeEmail, synchronizeLocalMailboxSources } from '../modules/mail-sources/service.js';
+
+function insertLocalAccounts(c, values) {
+	return c.env.db.transaction(() => {
+		const rows = orm(c).insert(account).values(values).returning().all();
+		for (const userId of new Set(rows.map(row => row.userId))) {
+			synchronizeLocalMailboxSources(c.env, { userId, requestId: c.get('requestId') || '' });
+		}
+		return rows;
+	}).immediate();
+}
 
 const accountService = {
 
@@ -33,7 +43,8 @@ const accountService = {
 			throw new BizError(t('emptyEmail'));
 		}
 
-		if (!verifyUtils.isEmail(email)) {
+		email = normalizeEmail(email);
+		if (!email) {
 			throw new BizError(t('notEmail'));
 		}
 
@@ -98,7 +109,7 @@ const accountService = {
 		}
 
 
-		accountRow = await orm(c).insert(account).values({ email: email, userId: userId, name: emailUtils.getName(email) }).returning().get();
+		accountRow = await this.insert(c, { email, userId, name: emailUtils.getName(email) });
 
 		if (addEmailVerify === settingConst.addEmailVerify.COUNT && !addVerifyOpen) {
 			const row = await verifyRecordService.increaseAddCount(c);
@@ -185,11 +196,11 @@ const accountService = {
 	},
 
 	async insert(c, params) {
-		await orm(c).insert(account).values({ ...params }).returning();
+		return insertLocalAccounts(c, [params])[0];
 	},
 
 	async insertList(c, list) {
-		await orm(c).insert(account).values(list).run();
+		return insertLocalAccounts(c, list);
 	},
 
 	async physicsDeleteByUserIds(c, userIds) {

@@ -1,16 +1,16 @@
 <template>
   <section class="feature-page">
-    <header class="page-heading"><div><h1>主邮箱管理</h1><p>管理本机接收邮件的主邮箱，为归入同一主邮箱的子地址分别生成独立收件链接。</p></div><div class="heading-actions"><el-button @click="settingsRef.open()">取信服务设置</el-button><el-button @click="batchRef.open()">批量创建邮箱</el-button><el-button type="primary" @click="openCreate">添加主邮箱</el-button></div></header>
+    <header class="page-heading"><div><h1>主邮箱管理</h1><p>与收件箱共用管理员邮箱目录，为归入同一主邮箱的子地址分别生成独立收件链接。</p></div><div class="heading-actions"><el-button @click="settingsRef.open()">取信服务设置</el-button><el-button @click="batchRef.open()">批量创建邮箱</el-button><el-button type="primary" @click="openCreate">添加主邮箱</el-button></div></header>
     <div class="toolbar"><el-input v-model="query.q" clearable placeholder="搜索主邮箱地址" @keyup.enter="search" @clear="search" /><el-button @click="search">查询</el-button><el-button :loading="loading" @click="refresh">刷新</el-button></div>
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false"><el-button text @click="refresh">重新加载</el-button></el-alert>
     <div v-loading="loading" class="list-region">
       <el-table class="mailbox-table" :data="items" row-key="id" :empty-text="loading || error ? ' ' : '尚未配置主邮箱'">
         <el-table-column prop="email" label="主邮箱地址" min-width="210" show-overflow-tooltip><template #default="{ row }"><strong>{{ row.email }}</strong></template></el-table-column>
-        <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="公开取信" width="120"><template #default="{ row }"><el-tag :type="row.localAccountStatus === 'disabled' ? 'warning' : row.enabled ? 'success' : 'info'">{{ row.localAccountStatus === 'disabled' ? '邮箱已停用' : row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="邮件来源" width="122"><template #default>MX / 本地收件</template></el-table-column>
         <el-table-column prop="publicId" label="公开标识" min-width="124" show-overflow-tooltip />
         <el-table-column label="收件范围" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ row.mxDomain ? `受控域名 ${row.mxDomain}` : row.email }}</template></el-table-column>
-        <el-table-column label="操作" width="224" :fixed="isDesktop ? 'right' : false"><template #default="{ row }"><div class="mailbox-actions"><el-button link type="primary" @click="goLinks(row)">管理子邮箱链接</el-button><el-button link type="primary" @click="openEdit(row)">编辑</el-button><el-button link :loading="busyId === row.id" :type="row.enabled ? 'warning' : 'success'" @click="toggle(row)">{{ row.enabled ? '停用' : '恢复' }}</el-button></div></template></el-table-column>
+        <el-table-column label="操作" width="224" :fixed="isDesktop ? 'right' : false"><template #default="{ row }"><div class="mailbox-actions"><el-button link type="primary" :disabled="row.localAccountStatus === 'disabled'" @click="goLinks(row)">管理子邮箱链接</el-button><el-button link type="primary" :disabled="row.localAccountStatus === 'disabled'" @click="openEdit(row)">编辑</el-button><el-button link :loading="busyId === row.id" :disabled="row.localAccountStatus === 'disabled'" :type="row.enabled ? 'warning' : 'success'" @click="toggle(row)">{{ row.enabled ? '停用' : '恢复' }}</el-button></div></template></el-table-column>
         <template #empty><el-empty v-if="!loading && !error" description="尚未配置主邮箱" /></template>
       </el-table>
     </div>
@@ -30,12 +30,12 @@
       <template #footer><el-button :disabled="saving" @click="dialog = false">取消</el-button><el-button v-if="editing" type="primary" :loading="saving" @click="save">保存</el-button></template>
     </el-dialog>
     <FeatureSettings ref="settingsRef" />
-    <BatchMailboxes ref="batchRef" @changed="refresh" />
+    <BatchMailboxes ref="batchRef" />
   </section>
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -57,6 +57,13 @@ const settingStore = useSettingStore()
 const accountStore = useAccountStore()
 const query = reactive({ page: 1, pageSize: 20, q: '' })
 const { items, total, loading, error, refresh } = useFeatureQuery(signal => adminFeatureRequest('/admin/mailboxes', { query, signal }))
+let observedListRevision = accountStore.listRevision
+watch(() => accountStore.listRevision, revision => {
+  if (revision !== observedListRevision) {
+    observedListRevision = revision
+    refresh()
+  }
+})
 const dialog = ref(false), editing = ref(null), saving = ref(false), formError = ref(''), busyId = ref('')
 const form = reactive({ email: '', mxMode: 'domain', mxDomain: '', localAccountId: 1 })
 const createForm = reactive({prefix:'',suffix:''}), domainOptions=ref([]), domainsLoaded=ref(false)
@@ -104,14 +111,14 @@ async function save() {
   saving.value = true
   try {
     await adminFeatureRequest(editing.value ? `/admin/mailboxes/${encodeURIComponent(editing.value.id)}` : '/admin/mailboxes', { method: editing.value ? 'PUT' : 'POST', data })
-    if(!editing.value)accountStore.listRevision++
+    if(!editing.value)observedListRevision = ++accountStore.listRevision
     dialog.value = false
     ElMessage.success(editing.value?'主邮箱已保存':'邮箱已添加，可继续生成子邮箱收件链接'); await refresh()
   } catch (cause) { formError.value = cause.message } finally { saving.value = false }
 }
 async function toggle(item) {
   try {
-    await ElMessageBox.confirm(item.enabled ? `停用 ${item.email} 后，其所有子邮箱链接将无法取信。确认停用？` : `恢复 ${item.email} 的取信能力？`, item.enabled ? '停用主邮箱' : '恢复主邮箱', { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(item.enabled ? `停用 ${item.email} 的公开取信后，其所有子邮箱链接将无法取信，收件箱仍可正常收信。确认停用？` : `恢复 ${item.email} 及其子邮箱链接的公开取信？`, item.enabled ? '停用公开取信' : '恢复公开取信', { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' })
     busyId.value = item.id
     await adminFeatureRequest(`/admin/mailboxes/${encodeURIComponent(item.id)}`, { method: 'PUT', data: { revision: item.revision, enabled: !item.enabled } })
     await refresh()

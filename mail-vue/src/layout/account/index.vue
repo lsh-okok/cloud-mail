@@ -162,12 +162,18 @@ const noLoading = ref(false)
 const loading = ref(false)
 const followLoading = ref(false);
 let observedListRevision = accountStore.listRevision
-watch([() => accountStore.listRevision, loading], ([revision, isLoading]) => {
-  if (revision !== observedListRevision && !isLoading) {
+watch([() => accountStore.listRevision, loading, followLoading], ([revision, isLoading, isFollowing]) => {
+  if (revision !== observedListRevision && !isLoading && !isFollowing) {
     observedListRevision = revision
     refresh()
   }
 })
+function notifyListChanged() {
+  const pendingRefresh = observedListRevision !== accountStore.listRevision
+  accountStore.listRevision++
+  // Preserve a refresh requested by another page before this local change.
+  if (!pendingRefresh) observedListRevision = accountStore.listRevision
+}
 const verifyShow = ref(false)
 const setNameShow = ref(false)
 const setNameLoading = ref(false)
@@ -344,6 +350,7 @@ function remove(account) {
     accountDelete(account.accountId).then(() => {
       const index = accounts.findIndex(item => item.accountId === account.accountId);
       accounts.splice(index, 1);
+      notifyListChanged()
       if (accounts.length < queryParams.size) {
         getAccountList()
       }
@@ -357,7 +364,7 @@ function remove(account) {
 }
 
 function refresh() {
-  if (loading.value) {
+  if (loading.value || followLoading.value) {
     return
   }
   loading.value = false
@@ -524,6 +531,7 @@ function submit() {
     addLoading.value = false
     addForm.email = ''
     accounts.push(account)
+    notifyListChanged()
     verifyToken = ''
     settingStore.settings.addVerifyOpen = account.addVerifyOpen
     ElMessage({

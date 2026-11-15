@@ -130,7 +130,8 @@ describe('one main mailbox and independent child recipient links', () => {
     const main = f.env.db.prepare('SELECT account_id,user_id FROM account WHERE email=?').get(f.env.admin);
     const otherId = Number(f.env.db.prepare('INSERT INTO account(email,name,user_id) VALUES(?,?,?)')
       .run('other@example.com', 'Other local mailbox', main.user_id).lastInsertRowid);
-    const accountSource = await f.source({ email: f.env.admin, mxDomain: null, localAccountId: main.account_id });
+    const accountSource = (await f.success(`/admin/mailboxes?email=${encodeURIComponent(f.env.admin)}`)).items[0];
+    expect(accountSource).toMatchObject({ localAccountId: main.account_id, mxDomain: null });
     const domainLink = (await f.links(domainSource.id, ['a1@example.com'])).items[0];
     const accountLink = (await f.links(accountSource.id, ['a1@example.com'])).items[0];
     f.message('a1@example.com', 'child-delivered-to-main-A', { accountId: main.account_id });
@@ -149,7 +150,8 @@ describe('one main mailbox and independent child recipient links', () => {
   it('checks underlying local account and user status even when a prior public result is cached', async () => {
     const f = await fixture();
     const main = f.env.db.prepare('SELECT account_id,user_id FROM account WHERE email=?').get(f.env.admin);
-    const source = await f.source({ email: f.env.admin, mxDomain: null, localAccountId: main.account_id });
+    const source = (await f.success(`/admin/mailboxes?email=${encodeURIComponent(f.env.admin)}`)).items[0];
+    expect(source).toMatchObject({ localAccountId: main.account_id, mxDomain: null });
     const { items: [link] } = await f.links(source.id, ['a1@example.com']);
     for (let i = 0; i < 4; i++) f.message('a1@example.com', `cached-main-account-secret-${i}`);
     expect((await f.mail(link)).response.status).toBe(200);
@@ -359,6 +361,7 @@ describe('platform, transaction and pagination boundaries', () => {
 describe('MX domain scope, live revocation and prefixed routes', () => {
   it('advertises only MX and rejects external providers at the administrator API boundary', async () => {
     const f = await fixture(), source = await f.source();
+    const before = f.env.db.prepare('SELECT * FROM source_mailbox ORDER BY id').all();
     expect((await f.success('/admin/mailboxes')).capabilities).toEqual({ providers: ['mx'], linkEncryption: true });
     for (const provider of ['outlook', 'icloud']) {
       const rejected = await f.api('/admin/mailboxes', { method: 'POST', data: { email: `main@${provider}.com`, provider } });
@@ -366,7 +369,7 @@ describe('MX domain scope, live revocation and prefixed routes', () => {
       expect((await f.api(`/admin/mailboxes?provider=${provider}`)).status).toBe(400);
       expect((await f.api(`/admin/mailboxes/${source.id}`, { method: 'PUT', data: { revision: source.revision, provider } })).status).toBe(400);
     }
-    expect(f.env.db.prepare('SELECT count(*) count FROM source_mailbox').get().count).toBe(1);
+    expect(f.env.db.prepare('SELECT * FROM source_mailbox ORDER BY id').all()).toEqual(before);
     expect(f.env.db.prepare('SELECT revision FROM source_mailbox WHERE id=?').get(source.id).revision).toBe(source.revision);
     f.env.secretVault = null;
     expect((await f.success('/admin/mailboxes')).capabilities).toEqual({ providers: ['mx'], linkEncryption: false });
@@ -383,7 +386,7 @@ describe('MX domain scope, live revocation and prefixed routes', () => {
     const stored = f.env.db.prepare('SELECT * FROM mail_link WHERE id=?').get(link.id);
     const token = f.env.secretVault.decrypt(stored.token_encrypted, `mail-link:${link.id}`);
     f.env.db.prepare("UPDATE source_mailbox SET provider='outlook' WHERE id=?").run(source.id);
-    expect((await f.success('/admin/mailboxes')).total).toBe(0);
+    expect((await f.success(`/admin/mailboxes?email=${encodeURIComponent(source.email)}`)).total).toBe(0);
     expect((await f.success('/admin/links')).total).toBe(0);
     expect(await (await f.api('/admin/links/export')).text()).toBe('');
     for (const url of [link.pageUrl, link.jsonUrl, `https://mail.example.com/m/${token}`, `https://mail.example.com/api/mailboxes/${token}/messages`]) {

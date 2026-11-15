@@ -8,6 +8,7 @@ import settingService from '../service/setting-service.js';
 import { assertNoPendingRestore } from './backup.js';
 import { createSecretVault } from '../modules/shared/secrets.js';
 import { initializeDomains } from '../modules/domains/service.js';
+import { synchronizeLocalMailboxSources } from '../modules/mail-sources/service.js';
 
 export function serviceContext(env) {
   const values = new Map();
@@ -39,6 +40,7 @@ export async function createEnvironment(config) {
     if (config.node_role !== 'replica') {
       initializeDomains(env);
       await bootstrapAdmin(env);
+      synchronizeLocalMailboxSources(env);
       await settingService.refresh(serviceContext(env));
     }
     return env;
