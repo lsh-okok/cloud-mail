@@ -38,6 +38,26 @@
         <div class="manage-title" v-perm="['all-email:query','user:query','role:query','setting:query','analysis:query','reg-key:query']">
           <div>{{$t('manage')}}</div>
         </div>
+        <el-menu-item @click="router.push({name: 'mailboxes'})" index="mailboxes" v-perm="'*'"
+                      :class="route.meta.name === 'mailboxes' ? 'choose-item' : ''">
+          <Icon icon="fluent:mail-inbox-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('sourceMailboxes')}}</span>
+        </el-menu-item>
+        <el-menu-item @click="router.push({name: 'links'})" index="links" v-perm="'*'"
+                      :class="route.meta.name === 'links' ? 'choose-item' : ''">
+          <Icon icon="fluent:link-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('recipientLinks')}}</span>
+        </el-menu-item>
+        <el-menu-item @click="router.push({name: 'verification'})" index="verification" v-perm="'*'"
+                      :class="route.meta.name === 'verification' ? 'choose-item' : ''">
+          <Icon icon="fluent:mail-checkmark-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('mailVerification')}}</span>
+        </el-menu-item>
+        <el-menu-item @click="router.push({name: 'nodes'})" index="nodes" v-perm="'*'"
+                      :class="route.meta.name === 'nodes' ? 'choose-item' : ''">
+          <Icon icon="fluent:server-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('nodeManagement')}}</span>
+        </el-menu-item>
         <el-menu-item @click="router.push({name: 'analysis'})" index="analysis" v-perm="'analysis:query'"
                       :class="route.meta.name === 'analysis' ? 'choose-item' : ''">
           <Icon icon="fluent:data-pie-20-regular" width="24" height="24" />

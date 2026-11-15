@@ -1,0 +1,40 @@
+name: Build server and web client
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: |
+            mail-worker/pnpm-lock.yaml
+            mail-vue/pnpm-lock.yaml
+      - run: pnpm --dir mail-worker install --frozen-lockfile
+      - run: pnpm --dir mail-vue install --frozen-lockfile
+      - run: pnpm --dir mail-worker run build
+      - run: pnpm --dir mail-worker test
+      - run: pnpm --dir mail-vue run build
+        env:
+          VITE_BASE_URL: /api
+          VITE_OUT_DIR: ../mail-worker/dist
+      - name: Validate deployment scripts
+        run: |
+          for script in docker/*.sh docker/mail/*.sh; do
+            if head -n 1 "$script" | grep -q bash; then bash -n "$script"; else sh -n "$script"; fi
+          done
+          docker compose --env-file .env.example config --quiet
+      - name: Exercise Docker mail stack
+        run: sh docker/smoke-test.sh

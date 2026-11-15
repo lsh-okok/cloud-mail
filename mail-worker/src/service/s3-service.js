@@ -2,6 +2,11 @@ import { S3Client, PutObjectCommand, DeleteObjectsCommand, GetObjectCommand } fr
 import settingService from './setting-service';
 import domainUtils from '../utils/domain-uitls';
 import { settingConst } from '../const/entity-const';
+import { createHash } from 'node:crypto';
+
+export function buildContentMD5Header(body) {
+	return { 'Content-MD5': createHash('md5').update(body).digest('base64') };
+}
 const s3Service = {
 
 	async putObj(c, key, content, metadata) {
@@ -48,16 +53,7 @@ const s3Service = {
 
 				const body = args.request.body
 
-				// 计算 MD5 校验和并转换为 Base64 编码
-				const encoder = new TextEncoder();
-				const data = encoder.encode(body);
-
-				// 使用 Web Crypto API 计算 MD5 校验和
-				const hashBuffer = await crypto.subtle.digest('MD5', data);
-				const hashArray = new Uint8Array(hashBuffer);
-				const contentMD5 = btoa(String.fromCharCode.apply(null, hashArray));
-
-				args.request.headers["Content-MD5"] = contentMD5;
+				Object.assign(args.request.headers, buildContentMD5Header(body));
 
 				return next(args);
 			},

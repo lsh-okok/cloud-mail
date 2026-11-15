@@ -15,7 +15,7 @@ export function cvtR2Url(key) {
 
     // No public CDN domain: serve via this site's /attachments|/static|/oss proxy
     if (!domain) {
-        return '/' + String(key).replace(/^\//, '')
+        return import.meta.env.BASE_URL + String(key).replace(/^\//, '')
     }
 
     if (!domain.startsWith('http')) {

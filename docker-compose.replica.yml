@@ -1,0 +1,35 @@
+# Standalone read-only node; use a separate .env, project name and volume.
+# docker compose --env-file node.env -p cloud-mail-replica -f docker-compose.replica.yml up -d
+services:
+  replica:
+    image: ${NODE_IMAGE:-cloud-mail-app:local}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_ROLE: replica
+      NODE_PRIMARY_URL: ${NODE_PRIMARY_URL:?Set NODE_PRIMARY_URL}
+      NODE_ID: ${NODE_ID:?Set NODE_ID}
+      NODE_CREDENTIAL: ${NODE_CREDENTIAL:?Set NODE_CREDENTIAL}
+      NODE_ALLOW_INSECURE_HTTP: ${NODE_ALLOW_INSECURE_HTTP:-false}
+      NODE_UPSTREAM_TIMEOUT: ${NODE_UPSTREAM_TIMEOUT:-15000}
+      APP_URL: ${APP_URL:?Set this replica APP_URL}
+      APP_BASE_PATH: ${APP_BASE_PATH:-}
+      JWT_SECRET: ${JWT_SECRET:?Generate a separate replica JWT_SECRET}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate a separate replica encryption key}
+      DATA_ENCRYPTION_KEY_ID: ${DATA_ENCRYPTION_KEY_ID:-v1}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      TZ: ${TZ:-UTC}
+      PORT: "3000"
+      DATA_DIR: /data
+      SQLITE_PATH: /data/cloud-mail.sqlite
+      OBJECTS_DIR: /data/objects
+      STATIC_DIR: /app/mail-worker/dist
+    volumes:
+      - replica_data:/data
+    ports:
+      - "${NODE_BIND_ADDRESS:-127.0.0.1}:${NODE_HTTP_PORT:-3001}:3000"
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  replica_data:

@@ -2,9 +2,10 @@ import axios from "axios";
 import router from "@/router";
 import i18n from "@/i18n/index.js";
 import {useSettingStore} from "@/store/setting.js";
+import {featureApiRoot} from "@/request/features.js";
 
 let http = axios.create({
-    baseURL: import.meta.env.VITE_BASE_URL
+    baseURL: featureApiRoot
 });
 
 http.interceptors.request.use(config => {

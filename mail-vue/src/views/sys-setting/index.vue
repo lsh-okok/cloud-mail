@@ -189,19 +189,10 @@
                 </div>
               </div>
               <div class="setting-item">
-                <div><span>{{ setting.hasCfEmail ? $t('cloudflareEmailSending') : $t('resendToken') }}</span></div>
-                <div v-if="setting.hasCfEmail">
-                  <span>{{ $t('enabled') }}</span>
-                </div>
-                <div v-else>
-                  <el-button class="opt-button" style="margin-top: 0" @click="openResendList" size="small"
-                             type="primary">
-                    <Icon icon="ic:round-list" width="18" height="18"/>
-                  </el-button>
-                  <el-button class="opt-button" style="margin-top: 0" @click="openResendForm" size="small"
-                             type="primary">
-                    <Icon icon="material-symbols:add-rounded" width="16" height="16"/>
-                  </el-button>
+                <div><span>{{ $t('outboundService') }}</span></div>
+                <div>
+                  <el-tag>Postfix</el-tag>
+                  <span style="margin-left: 8px">{{ setting.mailHost }}</span>
                 </div>
               </div>
               <div class="setting-item">
@@ -387,19 +378,20 @@
           </div>
 
           <div class="settings-card">
-            <div class="card-title">Workers AI</div>
+            <div class="card-title">{{ $t('codeRecognition') }}</div>
             <div class="card-content">
               <div class="setting-item">
                 <div><span>{{ $t('codeRecognition') }}</span></div>
                 <div>
-                  <el-switch @change="changeField('aiCode', $event)" :before-change="beforeChange" :active-value="0" :inactive-value="1"
-                             v-model="setting.aiCode"/>
+                  <el-tooltip :content="$t('aiUnavailable')">
+                    <el-switch disabled :model-value="1" :active-value="0" :inactive-value="1"/>
+                  </el-tooltip>
                 </div>
               </div>
               <div class="setting-item">
                 <div><span>{{ $t('codeRecognitionRules') }}</span></div>
                 <div class="forward">
-                  <el-button class="opt-button" size="small" type="primary" @click="openAiCodeFilter">
+                  <el-button disabled class="opt-button" size="small" type="primary">
                     <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
                   </el-button>
                 </div>

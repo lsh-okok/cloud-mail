@@ -1,6 +1,6 @@
 const analysisDao = {
 	async numberCount(c) {
-		const { results } = await c.env.db.prepare(`
+		const results = c.env.db.prepare(`
             SELECT
 				COALESCE(e.receiveTotal, 0) AS receiveTotal,
 				COALESCE(e.sendTotal, 0) AS sendTotal,
@@ -48,7 +48,7 @@ const analysisDao = {
 
 	async userDayCount(c, diffHours) {
 		const { tzMod, tzBack } = this.tzModifiers(diffHours);
-		const { results } = await c.env.db.prepare(`
+		const results = c.env.db.prepare(`
             SELECT
                 DATE(create_time, '${tzMod}') AS date,
                 COUNT(*) AS total
@@ -67,7 +67,7 @@ const analysisDao = {
 
 	async receiveDayCount(c, diffHours) {
 		const { tzMod, tzBack } = this.tzModifiers(diffHours);
-		const { results } = await c.env.db.prepare(`
+		const results = c.env.db.prepare(`
             SELECT
                 DATE(create_time, '${tzMod}') AS date,
                 COUNT(*) AS total
@@ -87,7 +87,7 @@ const analysisDao = {
 
 	async sendDayCount(c, diffHours) {
 		const { tzMod, tzBack } = this.tzModifiers(diffHours);
-		const { results } = await c.env.db.prepare(`
+		const results = c.env.db.prepare(`
             SELECT
                 DATE(create_time, '${tzMod}') AS date,
                 COUNT(*) AS total

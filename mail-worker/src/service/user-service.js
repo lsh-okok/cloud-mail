@@ -364,9 +364,9 @@ const userService = {
 		await accountService.insert(c, { userId: userId, email, type, name: emailUtils.getName(email) });
 	},
 
-	async resetDaySendCount(c) {
+	async resetDaySendCount(c, force = false) {
 		// 仅 UTC 0 点执行，便于配合每小时 cron
-		if (new Date().getUTCHours() !== 0) {
+		if (!force && new Date().getUTCHours() !== 0) {
 			return;
 		}
 		const roleList = await roleService.selectByIdsAndSendType(c, 'email:send', roleConst.sendType.DAY);

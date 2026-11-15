@@ -12,9 +12,9 @@ const verifyRecordService = {
 		return orm(c).select().from(verifyRecord).where(eq(verifyRecord.ip, ip)).all();
 	},
 
-	async clearRecord(c) {
+	async clearRecord(c, force = false) {
 		// 仅 UTC 0 点执行，便于配合每小时 cron
-		if (new Date().getUTCHours() !== 0) {
+		if (!force && new Date().getUTCHours() !== 0) {
 			return;
 		}
 		await orm(c).delete(verifyRecord).run();

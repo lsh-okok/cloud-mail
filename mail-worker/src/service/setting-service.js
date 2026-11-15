@@ -17,6 +17,7 @@ const settingService = {
 		const settingRow = await orm(c).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
 		settingRow.r2Domain = '';
+		settingRow.aiCode = 1;
 		c.set('setting', settingRow);
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
 	},
@@ -90,6 +91,9 @@ const settingService = {
 		settingRow.tgBotToken = settingRow.tgBotToken ? `${settingRow.tgBotToken.slice(0, 20)}******` : null;
 		settingRow.hasR2 = !!c.env.r2
 		settingRow.hasCfEmail = !!c.env.email
+		settingRow.mailProvider = 'postfix';
+		settingRow.mailHost = c.env.server.hostname;
+		settingRow.aiAvailable = false;
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false
@@ -112,6 +116,8 @@ const settingService = {
 	},
 
 	async set(c, params) {
+		// Workers AI is unavailable in this server runtime.
+		params.aiCode = 1;
 		const settingData = await this.query(c);
 		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
 		Object.keys(resendTokens).forEach(domain => {

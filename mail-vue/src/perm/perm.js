@@ -37,6 +37,32 @@ export function permsToRouter(permKeys) {
 }
 
 const routers = {
+    '*': [
+        {
+            path: '/admin/mailboxes',
+            name: 'mailboxes',
+            component: () => import('@/views/mailboxes/index.vue'),
+            meta: { title: 'sourceMailboxes', name: 'mailboxes', menu: true }
+        },
+        {
+            path: '/admin/links',
+            name: 'links',
+            component: () => import('@/views/links/index.vue'),
+            meta: { title: 'recipientLinks', name: 'links', menu: true }
+        },
+        {
+            path: '/admin/verification',
+            name: 'verification',
+            component: () => import('@/views/verification/index.vue'),
+            meta: { title: 'mailVerification', name: 'verification', menu: true }
+        },
+        {
+            path: '/admin/nodes',
+            name: 'nodes',
+            component: () => import('@/views/nodes/index.vue'),
+            meta: { title: 'nodeManagement', name: 'nodes', menu: true }
+        }
+    ],
     'email:send': [
         {
             path: '/sent',

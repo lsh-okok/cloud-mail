@@ -147,7 +147,7 @@ import {useUserStore} from "@/store/user.js";
 import {hasPerm} from "@/perm/perm.js"
 import {useI18n} from "vue-i18n";
 import {AccountAllReceiveEnum} from "@/enums/account-enum.js";
-import {reloadTurnstileScript} from "@/utils/turnstile-script.js";
+import {loadTurnstileScript, reloadTurnstileScript} from "@/utils/turnstile-script.js";
 
 const {t} = useI18n();
 const userStore = useUserStore();
@@ -161,6 +161,13 @@ const accounts = reactive([])
 const noLoading = ref(false)
 const loading = ref(false)
 const followLoading = ref(false);
+let observedListRevision = accountStore.listRevision
+watch([() => accountStore.listRevision, loading], ([revision, isLoading]) => {
+  if (revision !== observedListRevision && !isLoading) {
+    observedListRevision = revision
+    refresh()
+  }
+})
 const verifyShow = ref(false)
 const setNameShow = ref(false)
 const setNameLoading = ref(false)
@@ -488,10 +495,11 @@ function submit() {
     if (turnstileRecoveryAttempted) return
     if (!verifyShow.value) {
       verifyShow.value = true
-      nextTick(() => {
+      nextTick(async () => {
         if (!turnstileId) {
           try {
-            turnstileId = window.turnstile.render('.add-email-turnstile')
+            const api = await loadTurnstileScript()
+            turnstileId = api.render('.add-email-turnstile')
           } catch (e) {
             botJsError.value = true
             console.log('人机验证js加载失败')
@@ -534,8 +542,13 @@ function submit() {
       if (turnstileId) {
         window.turnstile.reset(turnstileId)
       } else {
-        nextTick(() => {
-          turnstileId = window.turnstile.render('.add-email-turnstile')
+        nextTick(async () => {
+          try {
+            const api = await loadTurnstileScript()
+            turnstileId = api.render('.add-email-turnstile')
+          } catch {
+            recoverTurnstile()
+          }
         })
       }
       verifyShow.value = true

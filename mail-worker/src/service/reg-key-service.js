@@ -93,7 +93,7 @@ const regKeyService = {
 		const rows = await orm(c).update(regKey)
 			.set({ count: sql`${regKey.count} - 1` })
 			.where(and(eq(regKey.code, code), gt(regKey.count, 0)))
-			.returning({ regKeyId: regKey.regKeyId });
+			.returning({ regKeyId: regKey.regKeyId }).all();
 		return rows.length > 0;
 	},
 

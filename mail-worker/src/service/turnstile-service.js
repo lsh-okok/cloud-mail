@@ -1,6 +1,7 @@
 import BizError from '../error/biz-error';
 import settingService from './setting-service';
 import { t } from '../i18n/i18n'
+import reqUtils from '../utils/req-utils';
 
 const turnstileService = {
 
@@ -20,7 +21,7 @@ const turnstileService = {
 			body: new URLSearchParams({
 				secret: settingRow.secretKey,
 				response: token,
-				remoteip: c.req.header('cf-connecting-ip')
+				remoteip: reqUtils.getIp(c)
 			})
 		});
 

@@ -6,6 +6,7 @@ import {permsToRouter} from "@/perm/perm.js";
 import router from "@/router";
 import {websiteConfig} from "@/request/setting.js";
 import i18n from "@/i18n/index.js";
+import {publicFeatureRequest} from "@/request/features.js";
 
 export async function init() {
     document.title = '\u200B'
@@ -22,6 +23,21 @@ export async function init() {
     }
 
     i18n.global.locale.value = settingStore.lang
+
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+    const currentPath = window.location.pathname.slice(basePath.length)
+    if (/^\/(m|show)\//.test(currentPath)) {
+        // A saved or expired management token must never redirect a public link to login.
+        try {
+            const setting = await publicFeatureRequest('/setting/websiteConfig')
+            settingStore.settings = setting
+            settingStore.domainList = setting.domainList || []
+            document.title = setting.title || 'Cloud Mail'
+        } catch {
+            document.title = 'Cloud Mail'
+        }
+        return
+    }
 
     let setting = null;
 

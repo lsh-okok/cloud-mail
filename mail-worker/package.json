@@ -1,28 +1,39 @@
 {
 	"name": "mail-worker",
-	"version": "0.0.0",
+	"version": "3.5.0-server.1",
 	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=24"
+	},
 	"scripts": {
-		"dev": "wrangler dev --config wrangler-dev.toml",
-		"test": "wrangler deploy --config wrangler-test.toml",
-		"deploy": "wrangler deploy",
-		"start": "wrangler dev"
+		"dev": "node --env-file-if-exists=../.env --env-file-if-exists=.env --import tsx --watch src/server/index.js",
+		"build": "node scripts/build.mjs",
+		"test": "vitest run",
+		"start": "node server-dist/index.cjs",
+		"backup": "node server-dist/cli.cjs backup",
+		"restore": "node server-dist/cli.cjs restore"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.7.5",
+		"esbuild": "^0.25.12",
+		"tsx": "^4.20.6",
 		"vitest": "~3.0.7",
-		"wrangler": "^4.90.0"
+		"yaml": "^2.8.1"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.882.0",
-		"@cloudflare/vite-plugin": "1.6.0",
+		"@hono/node-server": "^1.19.1",
+		"better-sqlite3": "^12.4.1",
 		"dayjs": "^1.11.13",
 		"drizzle-orm": "^0.42.0",
 		"hono": "4.12.16",
 		"i18next": "^25.3.2",
 		"linkedom": "^0.18.10",
+		"nodemailer": "^7.0.12",
 		"postal-mime": "^2.4.3",
+		"proper-lockfile": "4.1.2",
 		"resend": "^6.4.1",
+		"smtp-server": "^3.16.1",
 		"ua-parser-js": "^2.0.3",
 		"uuid": "^11.1.0"
 	}

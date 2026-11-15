@@ -38,9 +38,17 @@
                 <div>{{ formatDetailDate(email.createTime) }}</div>
               </div>
             </div>
-            <el-alert v-if="email.status === 3" :closable="false" :title="toMessage(email.message)" class="email-msg" type="error" show-icon />
+            <el-alert v-if="[3, 8].includes(email.status)" :closable="false" :title="toMessage(email.message)" class="email-msg" type="error" show-icon />
             <el-alert v-if="email.status === 4" :closable="false" :title="$t('complained')" class="email-msg" type="warning" show-icon />
             <el-alert v-if="email.status === 5" :closable="false" :title="$t('delayed')" class="email-msg" type="warning" show-icon />
+            <el-alert v-if="email.type === 1 && email.status === 1" :closable="false" :title="$t('queued')" class="email-msg" type="info" show-icon />
+            <div v-if="email.deliveries?.length" class="delivery-status">
+              <div v-for="delivery in email.deliveries" :key="delivery.recipient">
+                <span>{{ delivery.recipient }}</span>
+                <el-tag size="small" :type="deliveryTag(delivery.state)">{{ deliveryLabel(delivery.state) }}</el-tag>
+                <span v-if="delivery.detail" class="delivery-detail">{{ delivery.detail }}</span>
+              </div>
+            </div>
           </div>
           <el-scrollbar class="htm-scrollbar" :class="!email.attList?.length ? 'bottom-distance' : ''">
             <ShadowHtml class="shadow-html" :html="formatImage(email.content)" v-if="email.content" />
@@ -101,6 +109,19 @@ import {useUiStore} from "@/store/ui.js";
 import {useI18n} from "vue-i18n";
 import {EmailUnreadEnum} from "@/enums/email-enum.js";
 const { t } = useI18n()
+
+function deliveryLabel(state) {
+  if (state === 'sent' || state === 'delivered') return t('delivered');
+  if (['bounced', 'failed'].includes(state)) return t('bounced');
+  if (state === 'deferred') return t('delayed');
+  return t('queued');
+}
+function deliveryTag(state) {
+  if (state === 'sent' || state === 'delivered') return 'success';
+  if (['bounced', 'failed'].includes(state)) return 'danger';
+  if (state === 'deferred') return 'warning';
+  return 'info';
+}
 
 const uiStore = useUiStore();
 const settingStore = useSettingStore();
@@ -325,6 +346,21 @@ const handleDelete = () => {
 }
 </script>
 <style scoped lang="scss">
+.delivery-status {
+  margin: 10px 0;
+  > div {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 4px 0;
+    overflow-wrap: anywhere;
+  }
+  .delivery-detail {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
 .box {
   height: 100%;
   overflow: hidden;

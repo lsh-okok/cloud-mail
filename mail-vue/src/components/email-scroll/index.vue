@@ -890,7 +890,7 @@ function handleList(list) {
     email.test = t('received')
     const statusIconMap = {
       0: { icon: 'ic:round-mark-email-read', color: '#51C76B', content: t('received') },
-      1: { icon: 'bi:send-arrow-up-fill',  color: '#51C76B', content: t('sent') },
+      1: { icon: 'bi:send-arrow-up-fill',  color: '#909399', content: t('queued') },
       2: { icon: 'bi:send-check-fill',     color: '#51C76B', content: t('delivered') },
       3: { icon: 'bi:send-x-fill',         color: '#F56C6C', content: t('bounced') },
       8: { icon: 'bi:send-x-fill',         color: '#F56C6C', content: t('bounced') },

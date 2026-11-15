@@ -1,0 +1,30 @@
+<template>
+  <div class="source-panel">
+    <div class="toolbar"><el-input v-model="query.q" clearable placeholder="搜索主邮箱或完整子邮箱" @keyup.enter="search" @clear="search" /><div class="source-picker"><MailboxPicker v-model="query.mailboxId" :multiple="false" /></div><el-button @click="search">查询</el-button><el-button :loading="syncing" @click="sync">同步来源</el-button><el-button :loading="loading" @click="refresh()">刷新</el-button></div>
+    <p class="form-help">同步主邮箱与已生成的子邮箱链接。系统来源跟随有效链接策略；自定义 URL 会保留，不因同步覆盖。冲突、停用和过期来源不会参与新任务。</p>
+    <el-alert v-if="syncError || error" :title="syncError || error" type="error" :closable="false"><el-button text @click="refresh()">重试加载</el-button></el-alert>
+    <el-alert v-if="summary" :title="`主邮箱 ${summary.mainCount} · 子链接 ${summary.linkCount} · 已同步 ${summary.syncedCount} · 冲突 ${summary.conflictCount}`" :type="summary.conflictCount ? 'warning' : 'success'" :closable="false" />
+    <el-collapse v-if="summary?.conflicts?.length"><el-collapse-item :title="`查看 ${summary.conflicts.length} 个同步冲突`"><div v-for="(item,index) in summary.conflicts.slice((conflictPage - 1) * 20, conflictPage * 20)" :key="index" class="conflict-item"><strong>{{item.recipient}}</strong><span>{{item.reason}}</span></div><el-pagination v-model:current-page="conflictPage" :total="summary.conflicts.length" :page-size="20" layout="prev, pager, next" /></el-collapse-item></el-collapse>
+    <div class="list-region" v-loading="loading"><el-empty v-if="data && !data.items.length && !error" description="没有匹配的验证来源" /><div class="sources-grid"><article v-for="item in data?.items || []" :key="item.id" class="source-card"><div class="source-heading"><strong>{{item.recipient}}</strong><el-tag :type="item.eligible ? 'success' : 'warning'">{{item.eligible ? '可检测' : '不可检测'}}</el-tag></div><p>主邮箱：{{item.mailboxEmail}}</p><p>{{item.linkId ? '子邮箱来源' : '主邮箱来源'}} · {{item.mode === 'custom' ? '自定义链接' : '跟随系统链接'}} · 修订 {{item.revision}}</p><p v-if="item.reason" class="reason">{{item.reason}}</p><code class="source-url">{{item.mode === 'custom' ? item.customUrl : item.linkUrl || '尚无可用公开链接'}}</code><el-button @click="openEdit(item)">设置验证来源</el-button></article></div></div>
+    <el-pagination v-if="data?.total" v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="data.total" :page-sizes="[25,50,100]" layout="total, prev, pager, next, sizes" @current-change="refresh()" @size-change="search" />
+    <el-dialog v-model="editingVisible" title="设置验证来源" width="min(640px, calc(100vw - 28px))" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving"><p class="editing-recipient">{{editing?.recipient}}</p><el-form label-position="top"><el-form-item label="来源模式"><el-radio-group v-model="form.mode" :disabled="saving"><el-radio value="system">跟随系统公开链接</el-radio><el-radio value="custom">自定义外部 URL</el-radio></el-radio-group></el-form-item><el-form-item v-if="form.mode === 'custom'" label="HTTP(S) 完整取信 URL"><el-input v-model="form.customUrl" placeholder="https://mail.example.com/api/..." :disabled="saving" /><div class="form-help">应返回与该收件人对应的取信结果。外部 URL 禁止内网、回环及元数据地址，服务器会验证 DNS 和跳转。</div></el-form-item></el-form><el-alert v-if="saveError" :title="saveError" type="error" :closable="false" /><template #footer><el-button :disabled="saving" @click="editingVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存来源</el-button></template></el-dialog>
+  </div>
+</template>
+<script setup>
+import {computed,reactive,ref,watch} from 'vue'
+import {ElMessage} from 'element-plus'
+import {adminFeatureRequest} from '@/request/features.js'
+import {useFeatureResource} from '@/composables/use-feature-resource.js'
+import MailboxPicker from './mailbox-picker.vue'
+const emit=defineEmits(['synced']),query=reactive({q:'',mailboxId:'',page:1,pageSize:25})
+const {data,loading,error,refresh}=useFeatureResource(signal=>adminFeatureRequest('/admin/verification/sources',{query,signal}))
+const synced=ref(null),summary=computed(()=>synced.value||data.value?.summary),syncing=ref(false),syncError=ref(''),conflictPage=ref(1)
+const editing=ref(null),editingVisible=ref(false),saving=ref(false),saveError=ref(''),form=reactive({mode:'system',customUrl:''})
+function search(){query.page=1;refresh()}
+watch(()=>query.mailboxId,search)
+async function sync(){if(syncing.value)return;syncing.value=true;try{synced.value=await adminFeatureRequest('/admin/verification/sync',{method:'POST',data:{}});conflictPage.value=1;syncError.value='';emit('synced',synced.value);await refresh()}catch(cause){syncError.value=cause.message}finally{syncing.value=false}}
+function openEdit(item){editing.value=item;form.mode=item.mode;form.customUrl=item.customUrl||'';saveError.value='';editingVisible.value=true}
+async function save(){if(saving.value)return;saving.value=true;saveError.value='';try{await adminFeatureRequest(`/admin/verification/sources/${encodeURIComponent(editing.value.id)}`,{method:'PUT',data:{revision:editing.value.revision,mode:form.mode,customUrl:form.mode==='custom'?form.customUrl.trim():null}});editingVisible.value=false;await refresh();ElMessage.success('验证来源已更新')}catch(cause){saveError.value=cause.message}finally{saving.value=false}}
+refresh()
+</script>
+<style scoped>.source-picker{width:280px;max-width:100%}.sources-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(380px,100%),1fr));gap:16px;margin-top:18px}.source-card{border:1px solid var(--el-border-color-light);border-radius:12px;padding:18px;min-width:0}.source-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.source-card strong,.editing-recipient{overflow-wrap:anywhere}.source-card p{font-size:12px;line-height:1.7;color:var(--el-text-color-secondary);overflow-wrap:anywhere}.source-url{display:block;overflow-wrap:anywhere;font-size:12px;line-height:1.6;margin:12px 0 16px;color:var(--el-text-color-regular)}.source-card .reason{color:var(--el-color-warning)}.conflict-item{display:flex;gap:12px;padding:7px 0;font-size:12px;overflow-wrap:anywhere}@media(max-width:767px){.source-picker{width:100%}.conflict-item{display:grid;gap:4px}}</style>

@@ -1,10 +1,10 @@
 <p align="center">
     <img src="doc/demo/logo.png" width="80px" />
     <h1 align="center">Cloud Mail</h1>
-    <p align="center"><strong>基于 Cloudflare 的一站式邮箱服务平台</strong></p>
+    <p align="center"><strong>基于 Linux、Docker 与 Postfix 的自托管邮箱服务平台</strong></p>
     <p align="center">
-        <a href="https://www.cloudflare.com/" target="_blank">
-            <img src="https://img.shields.io/badge/Cloudflare-F38020?labelColor=F38020&amp;color=F38020&amp;logo=cloudflare&amp;logoColor=white" alt="Cloudflare" />
+        <a href="doc/server-deployment.md">
+            <img src="https://img.shields.io/badge/Node.js-24-339933?logo=node.js&amp;logoColor=white" alt="Node.js 24" />
         </a>
         <a href="https://github.com/maillab/cloud-mail/releases" target="_blank" >
             <img src="https://img.shields.io/github/v/release/maillab/cloud-mail?logo=github&amp;logoColor=white" alt="releases" />
@@ -14,7 +14,7 @@
         </a>  
     </p>
     <p align="center" >
-        <a href="https://skymail.ink">在线演示</a> · <a href="https://docs.skymail.ink">部署文档</a> ·
+        <a href="doc/server-deployment.md">服务器部署文档</a> ·
         <a align="center"><a href="README-en.md">English</a> | 简体中文</a>
     </p>
     <p align="center">
@@ -30,7 +30,9 @@
 
 ## 项目简介
 
-只需要一个域名，就可以创建多个不同的邮箱，类似各大邮箱平台，本项目支持部署到 Cloudflare Workers ，降低服务器成本，搭建自己的邮箱服务
+使用自己的域名创建多个邮箱。此分支默认在 Linux 服务器通过 Docker Compose 运行：Node.js 提供网页和 API，SQLite 保存数据，本地持久卷保存附件，Postfix/OpenDKIM 接收和直接投递邮件。网页 HTTPS 接入已有 Nginx Proxy Manager，并只读使用其证书；不需要 Cloudflare Workers、D1、KV、R2 或 Resend。
+
+**部署入口：[Linux 服务器部署](doc/server-deployment.md)**。从 `.env.example` 创建 `.env`，配置域名、管理员、NPM 网络和证书后运行 `docker compose up -d --build`。部署前需要服务器入站/出站 25 可用并完成 MX、PTR、SPF、DKIM、DMARC 配置。GitHub Actions 仅运行构建和测试，不自动部署。
 
 ## 项目展示
 
@@ -59,27 +61,27 @@
 
 ## 功能介绍
 
-- **💰 低成本使用**： 可部署到 Cloudflare Workers 降低服务器成本
+- **🐳 自托管部署**：Docker Compose 运行应用与邮件服务，数据、附件、队列和 DKIM 密钥保存在持久卷
 
 - **💻 响应式设计**：响应式布局自动适配PC和大部分手机端浏览器
 
-- **📧 邮件发送**：集成 Cloudflare Email 和 Resend 发送邮件，支持群发
+- **📧 邮件收发**：Postfix 接收公网邮件，通过 MX 直接投递，支持回复、转发、CC/BCC、群发与投递状态
 
 - **🛡️ 管理员功能**：可以对用户，邮件进行管理，RABC权限控制对功能及使用资源限制
 
-- **📦 附件收发**：支持收发附件，使用R2对象存储保存和下载文件
+- **📦 附件收发**：支持收发附件，默认使用本地文件持久化保存和下载
 
 - **🔔 邮件推送**：接收邮件后可以转发到TG机器人或其他服务商邮箱
 
 - **📡 开放API**：支持使用API批量生成用户，多条件查询邮件 
 
-- **🔢 验证码识别**：使用Workers AI，自动识别邮件验证码 
+- **🔎 邮件检索**：按主题、正文、发件人/收件人及时间检索，支持星标和已读状态
 
 - **📈 数据可视化**：使用ECharts对系统数据详情，用户邮件增长可视化显示
 
 - **🎨 个性化设置**：可以自定义网站标题，登录背景，透明度
 
-- **🤖 人机验证**：集成Turnstile人机验证，防止人机批量注册
+- **💾 备份恢复**：提供 SQLite、附件、邮件队列与 DKIM 密钥的一致性备份和恢复脚本
 
 - **📜 更多功能**：正在开发中...
 
@@ -87,7 +89,7 @@
 
 ## 技术栈
 
-- **平台**：[Cloudflare Workers](https://developers.cloudflare.com/workers/)
+- **运行环境**：Linux、Docker Compose、Node.js 24、pnpm 11
 
 - **Web框架**：[Hono](https://hono.dev/)
 
@@ -97,19 +99,25 @@
 
 - **UI框架**：[Element Plus](https://element-plus.org/) 
 
-- **邮件发送：** [Cloudflare Email](https://developers.cloudflare.com/email-service/) / [Resend](https://resend.com/)
+- **邮件服务：** Postfix / OpenDKIM，SMTP + LMTP
 
-- **缓存**：[Cloudflare KV](https://developers.cloudflare.com/kv/)
+- **缓存**：SQLite 持久化 KV
 
-- **数据库**：[Cloudflare D1](https://developers.cloudflare.com/d1/)
+- **数据库**：SQLite / better-sqlite3
 
-- **文件存储**：[Cloudflare R2](https://developers.cloudflare.com/r2/)
+- **文件存储**：本地 Docker 持久卷
+
+- **HTTPS**：已有 Nginx Proxy Manager；SMTP 只读挂载 NPM 的证书目录
 
 ## 目录结构
 
 ```
 cloud-mail
-├── mail-worker                    # worker后端项目
+├── Dockerfile                     # Node 应用镜像
+├── docker-compose.yml             # app + Postfix/OpenDKIM 与 NPM 网络
+├── docker                         # MTA 配置、备份恢复脚本
+├── doc/server-deployment.md        # DNS、证书、部署及收发演练
+├── mail-worker                    # Node 后端（保留原业务层）
 │   ├── src
 │   │   ├── api                    # api接口层
 │   │   ├── const                  # 项目常量
@@ -125,9 +133,9 @@ cloud-mail
 │   │   ├── service                # 业务服务层
 │   │   ├── template               # 消息模板
 │   │   ├── utils                  # 工具类
-│   │   └── index.js               # 入口文件
+│   │   └── server                 # Node 入口、SQLite、LMTP、策略服务
 │   ├── pageckge.json              # 项目依赖
-│   └── wrangler.toml              # 项目配置
+│   └── server-dist                # Node 构建产物
 │
 ├── mail-vue                       # vue前端项目
 │   ├── src

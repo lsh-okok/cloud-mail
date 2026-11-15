@@ -173,7 +173,7 @@ import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
 import {oauthBindUser, oauthLinuxDoLogin, oauthGithubLogin, oauthGoogleLogin} from "@/request/ouath.js";
-import {reloadTurnstileScript} from "@/utils/turnstile-script.js";
+import {loadTurnstileScript, reloadTurnstileScript} from "@/utils/turnstile-script.js";
 import loading from "@/components/loading/index.vue";
 
 const {t} = useI18n();
@@ -580,10 +580,11 @@ function submitRegister() {
     if (turnstileRecoveryAttempted) return
     if (!verifyShow.value) {
       verifyShow.value = true
-      nextTick(() => {
+      nextTick(async () => {
         if (!turnstileId) {
           try {
-            turnstileId = window.turnstile.render('.register-turnstile')
+            const api = await loadTurnstileScript()
+            turnstileId = api.render('.register-turnstile')
           } catch (e) {
             botJsError.value = true
             console.log('人机验证js加载失败')
@@ -639,8 +640,13 @@ function submitRegister() {
       if (turnstileId) {
         window.turnstile.reset(turnstileId)
       } else {
-        nextTick(() => {
-          turnstileId = window.turnstile.render('.register-turnstile')
+        nextTick(async () => {
+          try {
+            const api = await loadTurnstileScript()
+            turnstileId = api.render('.register-turnstile')
+          } catch {
+            recoverTurnstile()
+          }
         })
       }
       verifyShow.value = true

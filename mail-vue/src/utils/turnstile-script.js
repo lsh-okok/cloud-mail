@@ -2,6 +2,10 @@ const SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render
 
 let reloadPromise = null
 
+export function loadTurnstileScript() {
+  return window.turnstile?.render ? Promise.resolve(window.turnstile) : reloadTurnstileScript()
+}
+
 export function reloadTurnstileScript() {
   if (reloadPromise) return reloadPromise
 

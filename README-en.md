@@ -1,10 +1,10 @@
 <p align="center">
     <img src="doc/demo/logo.png" width="80px" />
     <h1 align="center">Cloud Mail</h1>
-    <p align="center">An all-in-one email service platform powered by Cloudflare</p>
+    <p align="center">A self-hosted email platform using Linux, Docker and Postfix</p>
     <p align="center">
-        <a href="https://www.cloudflare.com/" target="_blank">
-            <img src="https://img.shields.io/badge/Cloudflare-F38020?labelColor=F38020&amp;color=F38020&amp;logo=cloudflare&amp;logoColor=white" alt="Cloudflare" />
+        <a href="doc/server-deployment.md">
+            <img src="https://img.shields.io/badge/Node.js-24-339933?logo=node.js&amp;logoColor=white" alt="Node.js 24" />
         </a>
         <a href="https://github.com/maillab/cloud-mail/releases" target="_blank" >
             <img src="https://img.shields.io/github/v/release/maillab/cloud-mail?logo=github&amp;logoColor=white" alt="releases" />
@@ -14,7 +14,7 @@
         </a>
     </p>
     <p align="center">
-        <a href="https://skymail.ink">Live Demo</a> · <a href="https://docs.skymail.ink/en/">Deployment Guide</a> ·
+        <a href="doc/server-deployment.md">Server Deployment Guide</a> ·
         <a href="/README.md">简体中文</a> | English
     </p>
     <p align="center">
@@ -28,7 +28,9 @@
 </p>
 
 ## Description
-With only one domain, you can create multiple different email addresses, similar to major email platforms. This project can be deployed on Cloudflare Workers to reduce server costs and build your own email service.
+Create multiple mailboxes on your own domains. This branch runs on a Linux server with Docker Compose: Node.js serves the web client and API, SQLite stores application data, local volumes store attachments, and Postfix/OpenDKIM receive and directly deliver mail. It connects to an existing Nginx Proxy Manager for web HTTPS and mounts its certificates read-only for SMTP. Cloudflare Workers, D1, KV, R2 and Resend are not required.
+
+**Start with the [server deployment guide](doc/server-deployment.md)** (Chinese). Copy `.env.example` to `.env`, configure the domains, administrator, existing NPM network and certificate paths, then run `docker compose up -d --build`. Inbound/outbound port 25 and MX/PTR/SPF/DKIM/DMARC records are required. GitHub Actions builds and tests the project; it does not deploy it.
 ## Project Showcase
 
 | ![](/doc/demo/en/demo.jpg)  | ![](/doc/demo/en/demo1.jpg) |
@@ -55,33 +57,33 @@ With only one domain, you can create multiple different email addresses, similar
 
 ## Features
 
-- **💰 Low-Cost Usage**: No server required — deploy to Cloudflare Workers to reduce costs.
+- **🐳 Self-hosted Deployment**: Docker Compose with persistent data, attachments, mail queue and DKIM keys.
 
 - **💻 Responsive Design**: Automatically adapts to both desktop and most mobile browsers.
 
-- **📧 Email Sending**: Integrated with Cloudflare Email and Resend for sending email.
+- **📧 Email Delivery**: Postfix receives mail and delivers directly to destination MX servers, with replies, forwards, CC/BCC, bulk sending and delivery status.
 
 - **🛡️ Admin Features**: Admin controls for user and email management with RBAC-based access control.
 
-- **📦 Attachment Support**: Send and receive attachments, stored and downloaded via R2 object storage.
+- **📦 Attachment Support**: Send and receive attachments using persistent local file storage by default.
 
 - **🔔 Email Push**: Forward received emails to Telegram bots or other email providers.
 
 - **📡 Open API**: Supports batch user creation via API and multi-condition email queries
 
-- **🔢 Verification Code Recognition**: Auto-detect codes via Workers AI
+- **🔎 Mail Search**: Search subject, body, sender/recipient and dates; star messages and track read status.
 
 - **📈 Data Visualization**: Use ECharts to visualize system data, including user email growth.
 
 - **🎨 Personalization**: Customize website title, login background, and transparency.
 
-- **🤖 CAPTCHA**: Integrated with Turnstile CAPTCHA to prevent automated registration.
+- **💾 Backup and Restore**: Consistent SQLite, attachment, mail queue and DKIM key backup scripts.
 
 - **📜 More Features**: Under development...
 
 ## Tech Stack
 
-- **Platform**: [Cloudflare Workers](https://developers.cloudflare.com/workers/)
+- **Runtime**: Linux, Docker Compose, Node.js 24, pnpm 11
 
 - **Web Framework**: [Hono](https://hono.dev/)
 
@@ -91,19 +93,25 @@ With only one domain, you can create multiple different email addresses, similar
 
 - **UI Framework**: [Element Plus](https://element-plus.org/)
 
-- **Email Sending**: [Cloudflare Email](https://developers.cloudflare.com/email-service/) / [Resend](https://resend.com/)
+- **Mail Transport**: Postfix / OpenDKIM, SMTP + LMTP
 
-- **Cache**: [Cloudflare KV](https://developers.cloudflare.com/kv/)
+- **Cache**: Persistent SQLite KV
 
-- **Database**: [Cloudflare D1](https://developers.cloudflare.com/d1/)
+- **Database**: SQLite / better-sqlite3
 
-- **File Storage**: [Cloudflare R2](https://developers.cloudflare.com/r2/)
+- **File Storage**: Local Docker volumes
+
+- **HTTPS**: Existing Nginx Proxy Manager; read-only NPM certificate mount for SMTP
 
 ## Project Structure
 
 ```
 cloud-mail
-├── mail-worker                    # Backend worker project
+├── Dockerfile                     # Node application image
+├── docker-compose.yml             # app + Postfix/OpenDKIM and NPM network
+├── docker                         # MTA configuration and backup/restore scripts
+├── doc/server-deployment.md        # DNS, certificates, deployment and mail checks
+├── mail-worker                    # Node backend with the existing business layer
 │   ├── src
 │   │   ├── api                    # API layer
 │   │   ├── const                  # Project constants
@@ -119,9 +127,9 @@ cloud-mail
 │   │   ├── service                # Business logic layer
 │   │   ├── template               # Message templates
 │   │   ├── utils                  # Utility functions
-│   │   └── index.js               # Entry point
+│   │   └── server                 # Node entry, SQLite, LMTP and recipient policy
 │   ├── package.json               # Project dependencies
-│   └── wrangler.toml              # Project configuration
+│   └── server-dist                # Node build output
 │
 ├── mail-vue                       # Frontend Vue project
 │   ├── src

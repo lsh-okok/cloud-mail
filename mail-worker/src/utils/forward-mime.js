@@ -1,3 +1,5 @@
+import { enqueueOutbound } from '../server/delivery.js';
+
 function encodeMimeWord(value = '') {
 	const text = String(value).replace(/[\r\n]+/g, ' ');
 	if (!text || /^[\x20-\x7E]*$/.test(text)) {
@@ -114,11 +116,12 @@ const forwardMime = {
 		return `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`;
 	},
 
-	async send(binding, params, envelopeTo) {
-		const { EmailMessage } = await import('cloudflare:email');
-		const message = new EmailMessage(params.accountEmail, envelopeTo, this.build(params));
-		const result = await binding.send(message);
-		return { data: { id: result?.messageId } };
+	async send(env, params, envelopeTo) {
+		return enqueueOutbound(env, { ...params,
+			envelopeRecipients: [envelopeTo],
+			receiveEmail: (params.receiveEmail || []).map(value => typeof value === 'string' ? value : value.address),
+			headers: { 'X-Cloud-Mail-Forwarded': env.server?.hostname || 'Cloud Mail' }
+		});
 	}
 
 };

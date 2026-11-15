@@ -135,23 +135,25 @@ const publicService = {
 				type = roleRow ? roleRow.roleId : type;
 			}
 
-			const userSql = `INSERT INTO user (email, password, salt, type, os, browser, active_ip, create_ip, device, active_time, create_time)
-			VALUES ('${email}', '${hash}', '${salt}', '${type}', '${os}', '${browser}', '${activeIp}', '${activeIp}', '${device}', '${activeTime}', '${activeTime}')`
-
-			const accountSql = `INSERT INTO account (email, name, user_id)
-			VALUES ('${email}', '${emailUtils.getName(email)}', 0);`;
-
-			userList.push(c.env.db.prepare(userSql));
-			userList.push(c.env.db.prepare(accountSql));
+			userList.push({ email, hash, salt, type });
 
 		}
 
-		userList.push(c.env.db.prepare(`UPDATE account SET user_id = (SELECT user_id FROM user WHERE user.email = account.email) WHERE user_id = 0;`))
-
 		try {
-			await c.env.db.batch(userList);
+			c.env.db.transaction(() => {
+				const insertUser = c.env.db.prepare(`INSERT INTO user
+					(email, password, salt, type, os, browser, active_ip, create_ip, device, active_time, create_time)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+				const insertAccount = c.env.db.prepare('INSERT INTO account (email, name, user_id) VALUES (?, ?, ?)');
+				for (const row of userList) {
+					const inserted = insertUser.run(row.email, row.hash, row.salt, row.type,
+						os ?? null, browser ?? null, activeIp ?? null, activeIp ?? null,
+						device ?? null, activeTime, activeTime);
+					insertAccount.run(row.email, emailUtils.getName(row.email), Number(inserted.lastInsertRowid));
+				}
+			})();
 		} catch (e) {
-			if(e.message.includes('SQLITE_CONSTRAINT')) {
+			if (e.code?.startsWith('SQLITE_CONSTRAINT') || e.message.includes('SQLITE_CONSTRAINT')) {
 				throw new BizError(t('emailExistDatabase'))
 			} else {
 				throw e

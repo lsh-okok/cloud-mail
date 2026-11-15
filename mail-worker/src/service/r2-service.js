@@ -13,6 +13,8 @@ const r2Service = {
 			return 'S3';
 		}
 
+		if (c.env.storage) return 'LOCAL';
+
 		if (c.env.r2) {
 			return 'R2';
 		}
@@ -23,6 +25,8 @@ const r2Service = {
 	async putObj(c, key, content, metadata) {
 
 		const storageType = await this.storageType(c);
+
+		if (storageType === 'LOCAL') return c.env.storage.put(key, content, metadata);
 
 		if (storageType === 'KV') {
 			await kvObjService.putObj(c, key, content, metadata);
@@ -42,6 +46,8 @@ const r2Service = {
 
 	async getObj(c, key) {
 		const storageType = await this.storageType(c);
+
+		if (storageType === 'LOCAL') return c.env.storage.get(key);
 
 		if (storageType === 'KV') {
 			return await kvObjService.getObj(c, key);
@@ -63,6 +69,8 @@ const r2Service = {
 	async toObjResp(c, key) {
 		try {
 			const storageType = await this.storageType(c);
+
+			if (storageType === 'LOCAL') return c.env.storage.get(key);
 
 			if (storageType === 'KV') {
 				return await kvObjService.getObj(c, key);
@@ -100,6 +108,8 @@ const r2Service = {
 	async delete(c, key) {
 
 		const storageType = await this.storageType(c);
+
+		if (storageType === 'LOCAL') return c.env.storage.delete(key);
 
 		if (storageType === 'KV') {
 			await kvObjService.deleteObj(c, key);

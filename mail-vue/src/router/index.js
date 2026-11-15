@@ -64,6 +64,18 @@ const routes = [
         component: () => import('@/views/login/index.vue')
     },
     {
+        path: '/m/:token',
+        name: 'public-mail-token',
+        component: () => import('@/views/public-mail/index.vue'),
+        meta: { public: true }
+    },
+    {
+        path: '/show/:platform/:publicId/:recipient',
+        name: 'public-mail-address',
+        component: () => import('@/views/public-mail/index.vue'),
+        meta: { public: true }
+    },
+    {
         path: '/test',
         name: 'test',
         component: () => import('@/views/test/index.vue')
@@ -101,6 +113,8 @@ router.beforeEach((to, from, next) => {
             NProgress.start()
         }, 100)
     }
+
+    if (to.meta.public) return next()
 
     const token = localStorage.getItem('token')
 

@@ -213,32 +213,18 @@ const attService = {
 	},
 
 	async removeAttByField(c, fieldName, fieldValues) {
-
-		const sqlList = [];
-
-		fieldValues.forEach(value => {
-
-			sqlList.push(
-
-				c.env.db.prepare(
-					`SELECT a.key, a.att_id
-						FROM attachments a
-							   JOIN (SELECT key
-									 FROM attachments
-									 GROUP BY key
-									 HAVING COUNT (*) = 1) t
-									ON a.key = t.key
-						WHERE a.${fieldName} = ?;`
-					).bind(value)
-			)
-
-			sqlList.push(c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} = ?`).bind(value))
-
-		});
-
-		const attListResult = await c.env.db.batch(sqlList);
-
-		const delKeyList = attListResult.flatMap(r => r.results ? r.results.map(row => row.key) : []);
+		if (!['email_id', 'user_id', 'account_id'].includes(fieldName)) throw new TypeError('Invalid attachment field.');
+		const delKeyList = c.env.db.transaction(() => {
+			const keys = new Set();
+			const select = c.env.db.prepare(`SELECT DISTINCT key FROM attachments WHERE ${fieldName} = ?`);
+			const remove = c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} = ?`);
+			for (const value of fieldValues) {
+				for (const row of select.all(value)) keys.add(row.key);
+				remove.run(value);
+			}
+			const remaining = c.env.db.prepare('SELECT 1 FROM attachments WHERE key = ? LIMIT 1');
+			return [...keys].filter(key => !remaining.get(key));
+		})();
 
 		if (delKeyList.length > 0) {
 			try {
