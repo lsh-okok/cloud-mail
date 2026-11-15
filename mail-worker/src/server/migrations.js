@@ -7,7 +7,7 @@ import { FOUNDATION_SCHEMA } from '../modules/shared/schema.js';
 import { SOURCE_SCHEMA } from '../modules/mail-sources/schema.js';
 import { LINK_SCHEMA } from '../modules/links/schema.js';
 import { VERIFICATION_SCHEMA } from '../modules/verification/schema.js';
-import { NODE_SCHEMA } from '../modules/nodes/schema.js';
+import { NODE_SCHEMA, NODE_PUBLIC_IP_SCHEMA } from '../modules/nodes/schema.js';
 import { DOMAIN_SCHEMA } from '../modules/domains/schema.js';
 import { ADMINISTRATOR_SCHEMA } from '../modules/administrators/schema.js';
 
@@ -75,6 +75,13 @@ const migrations = [
 		up(db) {
 			db.exec(`DELETE FROM role_perm WHERE perm_id IN (SELECT perm_id FROM perm WHERE perm_id = 33 OR pid = 33);
 				DELETE FROM perm WHERE perm_id = 33 OR pid = 33;`);
+		}
+	},
+	{
+		version: 8,
+		name: 'reported-node-public-ip',
+		up(db) {
+			db.exec(NODE_PUBLIC_IP_SCHEMA);
 		}
 	}
 ];

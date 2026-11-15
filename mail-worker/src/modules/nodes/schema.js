@@ -36,3 +36,6 @@ CREATE TABLE node_replica_version (
   PRIMARY KEY(type,object_id)
 );
 `;
+
+// Kept separate so existing node tables migrate without changing migration 4.
+export const NODE_PUBLIC_IP_SCHEMA = `ALTER TABLE cluster_node ADD COLUMN reported_ip TEXT;`;

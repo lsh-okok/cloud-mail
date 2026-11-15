@@ -3,6 +3,7 @@ import { applyRecord, project } from './projection.js';
 import { assertReplicaReady, invalidateNodeCaches, nodeRole } from './access.js';
 import { cleanupNodeStorage } from './service.js';
 import { randomUUID } from 'node:crypto';
+import { startPublicIpDiscovery } from './address.js';
 
 const needsSnapshot = () => new FeatureError(409, 'SNAPSHOT_REQUIRED', 'A complete new node snapshot is required.');
 const unavailable = () => new FeatureError(503, 'NODE_UPSTREAM_UNAVAILABLE', 'The primary node could not confirm this read. Please retry shortly.');
@@ -103,6 +104,10 @@ export function startNodeRuntime(env) {
   const timeout = env.node_upstream_timeout ?? 15000;
   if (!number(timeout, 100) || timeout > 60000) throw new Error('NODE_UPSTREAM_TIMEOUT must be between 100 and 60000 milliseconds.');
   const fetcher = env.node_fetch || globalThis.fetch;
+  const publicIp = replica ? startPublicIpDiscovery({
+    fetcher: env.node_public_ip_fetch || globalThis.fetch, signal: lifetime.signal, publicIp: env.node_public_ip,
+  }) : null;
+  let publicIpReporting = false;
 
   function notReady() { owner.ready = false; env.clusterReady = false; invalidateNodeCaches(env); }
   function syncFailure(error) {
@@ -146,9 +151,20 @@ export function startNodeRuntime(env) {
 
   async function heartbeat(ready) {
     const row = stateRow(env);
-    const result = await request('heartbeat', { cursor: row.cursor, ready,
-      snapshotCompleted: Math.min(row.snapshot_total || 0, row.snapshot_next * 1000), snapshotTotal: row.snapshot_total || 0, lastError: '' });
+    const data = { cursor: row.cursor, ready,
+      snapshotCompleted: Math.min(row.snapshot_total || 0, row.snapshot_next * 1000), snapshotTotal: row.snapshot_total || 0, lastError: '' };
+    const address = publicIpReporting ? publicIp.getIp() : null;
+    let result;
+    try { result = await request('heartbeat', { ...data, ...(address ? { publicIp: address } : {}) }); }
+    catch (error) {
+      // A primary can be rolled back while a replica remains online. Retry the
+      // old protocol once if that version no longer recognizes publicIp.
+      if (!address || error.status !== 400 || error.code !== 'UNKNOWN_FIELD') throw error;
+      publicIpReporting = false;
+      result = await request('heartbeat', data);
+    }
     if (!number(result.primaryCursor) || typeof result.ready !== 'boolean' || result.nodeId !== env.node_id) throw needsSnapshot();
+    publicIpReporting = result.publicIpReporting === true;
     return result;
   }
 
@@ -250,6 +266,7 @@ export function startNodeRuntime(env) {
     stopped = true; clearInterval(timer); lifetime.abort(); notReady();
     const inFlight = [...requests.values()];
     for (const controller of requests.keys()) controller.abort();
+    await publicIp?.close();
     await pending?.catch(() => {});
     await Promise.allSettled(inFlight);
     // Public relay requests are awaited by HTTP shutdown before this runtime;

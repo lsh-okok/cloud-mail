@@ -35,6 +35,14 @@ describe('node deployment configuration and persistent role isolation', () => {
     expect(() => loadConfig({ ...base, VERIFICATION_SMTP_ALLOW_CIDRS: '127.0.0.1/33' })).toThrow('VERIFICATION_SMTP_ALLOW_CIDRS');
     expect(loadConfig({ ...base, VERIFICATION_SMTP_ALLOW_CIDRS: '127.0.0.1,172.30.89.0/24' }).verificationSmtpAllowCidrs).toEqual(['127.0.0.1', '172.30.89.0/24']);
   });
+  it('automatically discovers a public IP by default and accepts only a valid optional public address override', () => {
+    expect(loadConfig(base).node_public_ip).toBeNull();
+    expect(loadConfig({ ...base, NODE_PUBLIC_IP: '3.107.15.37' }).node_public_ip).toBe('3.107.15.37');
+    expect(loadConfig({ ...base, NODE_PUBLIC_IP: '2001:4860:4860::8888' }).node_public_ip).toBe('2001:4860:4860::8888');
+    for (const value of ['172.17.0.1', '127.0.0.1', '169.254.169.254', '::ffff:10.0.0.1', '2606:4700::1111%eth0', 'public.example.com']) {
+      expect(() => loadConfig({ ...base, NODE_PUBLIC_IP: value })).toThrow('NODE_PUBLIC_IP');
+    }
+  });
   it('does not bootstrap administrator accounts and keeps readiness closed before synchronization', async () => {
     const { env } = await fixture();
     expect(env.db.prepare('SELECT count(*) AS n FROM user').get().n).toBe(0);

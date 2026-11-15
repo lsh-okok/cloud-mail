@@ -11,7 +11,7 @@
 | DELETE `/api/admin/nodes/:id` | 无body | Node DTO；永久撤销，重复撤销幂等 |
 | DELETE `/api/admin/nodes/:id/record` | 无body | `{deleted:true,id}`；仅已撤销可删，否则409 |
 
-Node DTO：`{id,name,disabled,revoked,status,online,ready,ip,lastHeartbeatAt,lastSyncAt,cursor,primaryCursor,pendingEvents,snapshot:{completed,total,percent},lastError,createdAt,updatedAt}`。
+Node DTO：`{id,name,disabled,revoked,status,online,ready,ip,publicIp,reportedIp,connectionIp,lastHeartbeatAt,lastSyncAt,cursor,primaryCursor,pendingEvents,snapshot:{completed,total,percent},lastError,createdAt,updatedAt}`。`publicIp` 优先使用节点上报的有效公网地址，其次使用本身为公网的连接来源；没有时为 null。`reportedIp` 与主节点观测的 `connectionIp` 独立保存，旧 `ip` 字段保留兼容。页面仅将 `publicIp` 显示为公网 IP，不将 Docker 网桥或私网地址冒充公网。
 
 status枚举/优先级：`revoked`→`disabled`→`initializing`（首次未就绪）→`online`→`offline`。online要求最近成功心跳<=15秒且当前未停用/撤销；ready要求节点上报已追平，cursor>=primaryCursor且心跳未过期。启用会清除最近心跳与ready，等真实新心跳。节点可能online但尚未ready，UI需分别展示。
 
@@ -32,9 +32,11 @@ GET `/api/node-install/:token/config.env`返回独立connection.env并追加`INS
 - POST `/api/internal/snapshot` `{}` → `{sessionId,cursor,total,pageSize:1000,pages,expiresAt}` 固定快照。
 - GET `/api/internal/snapshot/:sessionId?page=0` → `{sessionId,cursor,total,page,pageSize,items,nextPage}` items=`{type,id,revision,data}`，type为mailbox/platform/link/settings；完整快照密文落SQLite，15分钟有效且绑定节点/主进程。
 - GET `/api/internal/events?after=0` → `{after,events:[{cursor,type,id,revision,data}],cursor,primaryCursor,hasMore}`，最多500，连续游标；过旧/缺口409 `SNAPSHOT_REQUIRED`。
-- POST `/api/internal/heartbeat` `{cursor,ready,snapshotCompleted,snapshotTotal,lastError}` → `{primaryCursor,ready,nodeId}`，primary观测IP；状态在事务中再次鉴权/CAS。
+- POST `/api/internal/heartbeat` `{cursor,ready,snapshotCompleted,snapshotTotal,lastError,publicIp?}` → `{primaryCursor,ready,nodeId,publicIpReporting:true}`；状态在事务中再次鉴权/CAS。子节点首次使用旧请求格式，收到 `publicIpReporting:true` 后才附带公网地址，兼容不接受新字段的旧主节点。公网地址须为有效的公网 IPv4/IPv6；缺省保留此前上报值，null 显式清除。自报地址仅用于展示，不参与认证、审计、限流或反向代理信任判断。
 - POST `/api/internal/mx/read` `{linkId,recipient,platformId,fingerprint,order,limit,validateOnly}` → `{messages}`，只读重新构建主节点真实链接策略，完整收件人和指纹必须一致；缓存/分页返回前也validateOnly。
 
 子节点runtime每5秒同步，快照staging/分页进度持久化，完整后事务原子安装并补齐连续事件，通过主节点心跳确认才ready；重启一律先未ready。明确401/403立即未ready，网络失败最多沿用120秒；MX读取仍依赖主节点，失联无法凭旧缓存绕过最终复核。
+
+子节点独立后台通过固定 HTTPS 公网地址服务探测公网出口 IP，成功缓存10分钟刷新，失败60秒重试并保留最近成功结果；每个请求最多3秒、响应最多128字节，不跟随重定向，不发送节点接入凭据。探测不阻塞同步、心跳、就绪或关闭，部署无需修改 NPM。`NODE_PUBLIC_IP` 可选地固定一个合法公网地址；默认自动获取。单独的 `node_public_ip_fetch` 仅供测试注入，与主同步的 `node_fetch` 分离。
 
 集成：`NODE_SCHEMA`加入下一次迁移；`mountNodeRoutes(router)`在admin兜底前调用；`startNodeRuntime(env)`返回异步stop函数，额外挂`stop.tick()`供确定性运维/测试；env需`node_role,node_primary_url,node_id,node_credential,node_allow_insecure_http,node_upstream_timeout`以及独立`secretVault,db,publicMailState,mailSourceState`。replica不bootstrapAdmin/不启动SMTP/LMTP/维护任务。

@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { domainToASCII } from 'node:url';
 import { normalizeBasePath } from '../modules/shared/urls.js';
 import { parseTrustedProxies } from '../modules/shared/proxy.js';
+import { normalizePublicIp } from '../modules/nodes/address.js';
 
 function port(value, fallback, name) {
   const result = Number(value ?? fallback);
@@ -63,6 +64,8 @@ export function loadConfig(source = process.env) {
   }
   const nodeId = source.NODE_ID || '';
   const nodeCredential = source.NODE_CREDENTIAL || '';
+  const nodePublicIp = source.NODE_PUBLIC_IP ? normalizePublicIp(source.NODE_PUBLIC_IP) : null;
+  if (source.NODE_PUBLIC_IP && !nodePublicIp) throw new Error('NODE_PUBLIC_IP must be a public IPv4 or IPv6 address');
   if (replica && (!nodePrimaryUrl || !/^[a-zA-Z0-9_-]{1,128}$/.test(nodeId) || !/^[a-zA-Z0-9_-]{43}$/.test(nodeCredential))) throw new Error('Replica NODE_PRIMARY_URL, NODE_ID and NODE_CREDENTIAL are required');
   const nodeUpstreamTimeout = Number(source.NODE_UPSTREAM_TIMEOUT || 15000);
   if (!Number.isInteger(nodeUpstreamTimeout) || nodeUpstreamTimeout < 1000 || nodeUpstreamTimeout > 60000) throw new Error('NODE_UPSTREAM_TIMEOUT must be between 1000 and 60000 milliseconds');
@@ -84,6 +87,7 @@ export function loadConfig(source = process.env) {
     data_keys: dataKeys, data_key_id: dataKeyId,
     node_role: nodeRole, node_primary_url: nodePrimaryUrl, node_id: nodeId,
     node_credential: nodeCredential, node_allow_insecure_http: nodeAllowInsecureHttp,
+    node_public_ip: nodePublicIp,
     node_upstream_timeout: nodeUpstreamTimeout, verificationSmtpAllowCidrs,
     orm_log: source.ORM_LOG === 'true', analysis_cache: source.ANALYSIS_CACHE === 'true',
     trust_proxy: source.TRUST_PROXY !== 'false' && trustedProxies.length > 0, trusted_proxies: trustedProxies,

@@ -3,6 +3,7 @@ import { FeatureError, positiveInt, strictJson } from '../shared/errors.js';
 import { appendAudit } from '../shared/settings.js';
 import { resolveClientIp } from '../shared/proxy.js';
 import { nodeRole } from './access.js';
+import { normalizePublicIp } from './address.js';
 import { project, snapshotRecords } from './projection.js';
 import { validatePublicLink } from '../public-mail/service.js';
 import { readSourceMessages } from '../mail-sources/service.js';
@@ -39,9 +40,12 @@ export function nodeDto(env, row) {
   const cursor = primaryCursor(env.db);
   const online = !row.revoked && !row.disabled && row.last_heartbeat_at != null && Date.now() - row.last_heartbeat_at <= 15000;
   const ready = online && !!row.ready && row.cursor >= cursor;
+  const reportedIp = normalizePublicIp(row.reported_ip);
+  const publicIp = reportedIp || normalizePublicIp(row.ip);
   return { id: row.id, name: row.name, disabled: !!row.disabled, revoked: !!row.revoked,
     status: row.revoked ? 'revoked' : row.disabled ? 'disabled' : !row.initialized ? 'initializing' : online ? 'online' : 'offline',
-    online, ready, ip: row.ip, lastHeartbeatAt: iso(row.last_heartbeat_at), lastSyncAt: iso(row.last_sync_at),
+    online, ready, ip: publicIp || row.ip, publicIp, reportedIp, connectionIp: row.ip,
+    lastHeartbeatAt: iso(row.last_heartbeat_at), lastSyncAt: iso(row.last_sync_at),
     cursor: row.cursor, primaryCursor: cursor, pendingEvents: Math.max(0, cursor - row.cursor),
     snapshot: { completed: row.snapshot_completed, total: row.snapshot_total,
       percent: row.snapshot_total ? Math.min(100, Math.floor(row.snapshot_completed * 100 / row.snapshot_total)) : 0 },
@@ -212,20 +216,23 @@ export function mountNodeRoutes(router) {
   });
   router.post('/internal/heartbeat', async c => {
     const authenticated = authenticateNode(c);
-    const data = await strictJson(c, ['cursor', 'ready', 'snapshotCompleted', 'snapshotTotal', 'lastError']);
+    const data = await strictJson(c, ['cursor', 'ready', 'snapshotCompleted', 'snapshotTotal', 'lastError', 'publicIp']);
     const cursor = integer(data.cursor, 'cursor'), completed = integer(data.snapshotCompleted ?? 0, 'snapshotCompleted', 250000), total = integer(data.snapshotTotal ?? 0, 'snapshotTotal', 250000);
     if (typeof data.ready !== 'boolean' || completed > total || (data.lastError !== undefined && (typeof data.lastError !== 'string' || !/^[A-Z0-9_]{0,80}$/.test(data.lastError)))) throw new FeatureError(400, 'INVALID_PARAMETER', 'Heartbeat progress or error code is invalid.');
+    const hasPublicIp = Object.hasOwn(data, 'publicIp');
+    const publicIp = data.publicIp === null ? null : normalizePublicIp(data.publicIp);
+    if (hasPublicIp && data.publicIp !== null && !publicIp) throw new FeatureError(400, 'INVALID_PUBLIC_IP', 'The reported address must be a valid public IP.');
     const result = c.env.db.transaction(() => {
       const row = authenticateNode(c, authenticated), head = primaryCursor(c.env.db);
       if (cursor > head) throw new FeatureError(409, 'SNAPSHOT_REQUIRED', 'The node cursor is ahead of the primary.');
       const ready = data.ready && cursor === head && completed === total;
       const now = Date.now(), ip = c.get('clientIp') || resolveClientIp(c.env, c.req, c.env.remote_address) || null;
-      const updated = c.env.db.prepare(`UPDATE cluster_node SET ip=?,last_heartbeat_at=?,last_sync_at=CASE WHEN ? THEN ? ELSE last_sync_at END,
+      const updated = c.env.db.prepare(`UPDATE cluster_node SET ip=?,reported_ip=CASE WHEN ? THEN ? ELSE reported_ip END,last_heartbeat_at=?,last_sync_at=CASE WHEN ? THEN ? ELSE last_sync_at END,
         cursor=max(cursor,?),ready=?,initialized=max(initialized,?),snapshot_completed=?,snapshot_total=?,last_error=?
-        WHERE id=? AND status_version=? AND disabled=0 AND revoked=0`).run(ip, now, Number(ready || cursor > row.cursor), now, cursor,
+        WHERE id=? AND status_version=? AND disabled=0 AND revoked=0`).run(ip, Number(hasPublicIp), publicIp, now, Number(ready || cursor > row.cursor), now, cursor,
         Number(ready), Number(ready), completed, total, data.lastError || '', row.id, authenticated.status_version);
       if (!updated.changes) throw new FeatureError(403, 'NODE_DISABLED', 'The node status changed during its heartbeat.');
-      return { primaryCursor: head, ready, nodeId: row.id };
+      return { primaryCursor: head, ready, nodeId: row.id, publicIpReporting: true };
     }).immediate();
     return c.json({ data: result });
   });

@@ -16,7 +16,7 @@ import { validatePublicLink } from '../src/modules/public-mail/service.js';
 
 const resources = [];
 const deploymentToken = result => /'--install-token' '([A-Za-z0-9_-]{43})'/.exec(result.deployment.command)[1];
-async function fixture({ role = 'primary', primary, node, prefix = '', root: existingRoot } = {}) {
+async function fixture({ role = 'primary', primary, node, prefix = '', root: existingRoot, remoteAddress = '172.18.0.5' } = {}) {
   const root = existingRoot || mkdtempSync(join(tmpdir(), 'cloud-mail-nodes-'));
   writeFileSync(join(root, 'index.html'), '<!doctype html><html><body>Public recipient application</body></html>');
   const config = loadConfig({ MAIL_DOMAINS: role === 'primary' ? 'example.com' : undefined,
@@ -30,6 +30,7 @@ async function fixture({ role = 'primary', primary, node, prefix = '', root: exi
       NODE_ID: node.node.id, NODE_CREDENTIAL: node.credential } : {}),
   });
   const env = await createEnvironment(config);
+  env.node_public_ip_fetch = async () => new Response('', { status: 503 });
   env.mailReady = role === 'primary';
   const app = createApp(env);
   const f = { root, env, app, config, prefix, stop: null, removed: false };
@@ -41,7 +42,7 @@ async function fixture({ role = 'primary', primary, node, prefix = '', root: exi
         ...(token && admin ? { authorization: token } : {}), ...(csrf && admin ? { 'x-csrf-token': csrf } : {}),
         ...(method === 'GET' || method === 'HEAD' ? {} : { origin: config.app_url }), ...headers },
       ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-    }, { ...env, remote_address: '172.18.0.5' });
+    }, { ...env, remote_address: remoteAddress });
   }
   async function ok(path, options, status = 200) {
     const response = await api(path, options), body = await response.json();
@@ -253,6 +254,40 @@ describe('independent MX replica nodes', () => {
     expect((await p.ok('/admin/nodes')).items[0].online).toBe(false);
   });
 
+  it('corrects a saved Docker gateway IP on the next authenticated heartbeat from an explicitly trusted proxy', async () => {
+    const p = await fixture({ remoteAddress: '172.17.0.1' }), node = await p.createNode();
+    const data = { cursor: primaryCursor(p.env.db), ready: true };
+    const headers = { 'x-forwarded-for': '3.107.15.37', 'x-real-ip': '3.107.15.37' };
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data, headers })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({ ip: '172.17.0.1', online: true, ready: true });
+
+    p.env.trusted_proxies = ['172.17.0.1']; p.env.trust_proxy = true;
+    const before = p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id);
+    const denied = await p.internal({ ...node, credential: randomBytes(32).toString('base64url') }, 'heartbeat', { method: 'POST', data, headers });
+    expect(denied.status).toBe(401);
+    expect(p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id)).toEqual(before);
+
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data, headers })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({ ip: '3.107.15.37', online: true, ready: true });
+    expect(p.env.db.prepare('SELECT ip FROM cluster_node WHERE id=?').get(node.node.id).ip).toBe('3.107.15.37');
+  });
+
+  it('uses only the nearest untrusted forwarded hop and ignores forwarding headers on direct node connections', async () => {
+    const p = await fixture({ remoteAddress: '172.17.0.1' }), node = await p.createNode();
+    p.env.trusted_proxies = ['172.17.0.1']; p.env.trust_proxy = true;
+    const data = { cursor: primaryCursor(p.env.db), ready: true };
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data,
+      headers: { 'x-forwarded-for': '203.0.113.99, 3.107.15.37', 'x-real-ip': '203.0.113.99' } })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0].ip).toBe('3.107.15.37');
+
+    const response = await p.app.request('https://mail.example.com/api/internal/heartbeat', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${node.credential}`,
+        'x-node-id': node.node.id, 'x-forwarded-for': '203.0.113.99', 'x-real-ip': '203.0.113.99' }, body: JSON.stringify(data),
+    }, { ...p.env, remote_address: '3.107.15.38' });
+    expect(response.status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0].ip).toBe('3.107.15.38');
+  });
+
   it('rechecks status after an authenticated heartbeat body is delayed', async () => {
     const p = await fixture(), node = await p.createNode();
     let release;
@@ -264,6 +299,68 @@ describe('independent MX replica nodes', () => {
     release();
     expect((await pending).status).toBe(403);
     expect(p.env.db.prepare('SELECT disabled,last_heartbeat_at,ip,ready FROM cluster_node').get()).toEqual({ disabled: 1, last_heartbeat_at: null, ip: null, ready: 0 });
+  });
+
+  it('shows a node-reported public IP while retaining the actual connection address and legacy heartbeat behavior', async () => {
+    const p = await fixture({ remoteAddress: '172.17.0.1' }), node = await p.createNode();
+    const data = { cursor: primaryCursor(p.env.db), ready: true };
+    const response = await p.internal(node, 'heartbeat', { method: 'POST', data: { ...data, publicIp: '3.107.15.37' } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({ publicIpReporting: true, nodeId: node.node.id, ready: true });
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({
+      ip: '3.107.15.37', publicIp: '3.107.15.37', reportedIp: '3.107.15.37', connectionIp: '172.17.0.1', ready: true,
+    });
+    expect(p.env.db.prepare('SELECT ip,reported_ip FROM cluster_node WHERE id=?').get(node.node.id))
+      .toEqual({ ip: '172.17.0.1', reported_ip: '3.107.15.37' });
+
+    const before = p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id);
+    const denied = await p.internal({ ...node, credential: randomBytes(32).toString('base64url') }, 'heartbeat',
+      { method: 'POST', data: { ...data, publicIp: '8.8.4.4' } });
+    expect(denied.status).toBe(401);
+    expect(p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id)).toEqual(before);
+
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0].publicIp).toBe('3.107.15.37');
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data: { ...data, publicIp: null } })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({
+      ip: '172.17.0.1', publicIp: null, reportedIp: null, connectionIp: '172.17.0.1', ready: true,
+    });
+  });
+
+  it('rejects malformed or private public-IP reports without changing the last authenticated node state', async () => {
+    const p = await fixture({ remoteAddress: '172.17.0.1' }), node = await p.createNode();
+    const data = { cursor: primaryCursor(p.env.db), ready: true, publicIp: '3.107.15.37' };
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data })).status).toBe(200);
+    const before = p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id);
+    for (const publicIp of ['172.17.0.1', '127.0.0.1', '10.0.0.2', '169.254.1.1', '::1', 'fc00::1',
+      '::ffff:192.168.1.2', '198.51.100.10', '2001:db8::1', '2001:4860::1%eth0', 'example.com', 'https://8.8.8.8', '1.1.1.1,8.8.8.8', '', {}, [], 42, true]) {
+      const response = await p.internal(node, 'heartbeat', { method: 'POST', data: { ...data, publicIp } });
+      expect(response.status, JSON.stringify(publicIp)).toBe(400);
+      expect((await response.json()).error.code).toBe('INVALID_PUBLIC_IP');
+      expect(p.env.db.prepare('SELECT * FROM cluster_node WHERE id=?').get(node.node.id)).toEqual(before);
+    }
+  });
+
+  it('uses a directly observed public connection address before a node supports IP reporting', async () => {
+    const p = await fixture({ remoteAddress: '3.107.15.37' }), node = await p.createNode();
+    expect((await p.internal(node, 'heartbeat', { method: 'POST', data: { cursor: primaryCursor(p.env.db), ready: true } })).status).toBe(200);
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({
+      ip: '3.107.15.37', publicIp: '3.107.15.37', reportedIp: null, connectionIp: '3.107.15.37',
+    });
+  });
+
+  it('reports a replica-discovered public address through the authenticated heartbeat without proxy changes', async () => {
+    const p = await fixture(); p.start(); await p.source();
+    const node = await p.createNode(), r = await fixture({ role: 'replica', primary: p, node });
+    r.env.node_public_ip_fetch = async () => new Response('3.107.15.37\n');
+    r.start();
+    await r.stop.tick();
+    await new Promise(resolve => setImmediate(resolve));
+    await r.stop.tick();
+    expect((await p.ok('/admin/nodes')).items[0]).toMatchObject({
+      ip: '3.107.15.37', publicIp: '3.107.15.37', reportedIp: '3.107.15.37', connectionIp: '172.18.0.8', ready: true,
+    });
+    expect(p.env.trusted_proxies).toEqual([]);
   });
 
   it('materializes node-bound encrypted fixed pages, excludes secrets and invalidates expired or restarted sessions', async () => {

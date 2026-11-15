@@ -101,10 +101,27 @@ describe('SQLite persistence and migrations', () => {
     { version: 5, name: 'managed-mail-domains' },
     { version: 6, name: 'persistent-site-administrators' },
     { version: 7, name: 'remove-registration-key-permissions' },
+    { version: 8, name: 'reported-node-public-ip' },
   ]);
 		expect(await createKV(db).get('session', 'json')).toEqual({ userId: 42 });
 		expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
 		expect(db.pragma('synchronous', { simple: true })).toBe(2);
+	});
+
+	it('adds public-IP reports to an existing node database without losing connection metadata', () => {
+		const db = database();
+		// Reproduce the previous schema version, including an already connected node.
+		db.exec('ALTER TABLE cluster_node DROP COLUMN reported_ip; DELETE FROM schema_migrations WHERE version=8;');
+		db.prepare(`INSERT INTO cluster_node(id,name,credential_digest,ip,last_heartbeat_at,cursor,ready,initialized,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?)`).run('existing-node', 'Existing node', 'ab'.repeat(32), '172.17.0.1', 123456, 0, 1, 1, 123, 456);
+		const before = db.prepare('SELECT * FROM cluster_node').get();
+		migrateDatabase(db);
+		expect(db.prepare('SELECT * FROM cluster_node').get()).toEqual({ ...before, reported_ip: null });
+		db.prepare('UPDATE cluster_node SET reported_ip=?').run('3.107.15.37');
+		migrateDatabase(db);
+		expect(db.prepare('SELECT ip,reported_ip,last_heartbeat_at,ready FROM cluster_node').get())
+			.toEqual({ ip: '172.17.0.1', reported_ip: '3.107.15.37', last_heartbeat_at: 123456, ready: 1 });
+		expect(db.prepare('SELECT count(*) AS count FROM schema_migrations WHERE version=8').get().count).toBe(1);
 	});
 
 	it('keeps case-insensitive uniqueness and rolls back a failed batch', () => {
