@@ -82,10 +82,6 @@
           <el-input v-model="registerForm.password" :placeholder="$t('password')" type="password" autocomplete="off" @keyup.enter="submitRegister"/>
           <el-input v-model="registerForm.confirmPassword" :placeholder="$t('confirmPwd')" type="password"
                     autocomplete="off" @keyup.enter="submitRegister"/>
-          <el-input v-if="settingStore.settings.regKey === 0" v-model="registerForm.code" :placeholder="$t('regKey')"
-                    type="text" autocomplete="off" @keyup.enter="submitRegister"/>
-          <el-input v-if="settingStore.settings.regKey === 2" v-model="registerForm.code"
-                    :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="submitRegister"/>
           <div v-show="verifyShow"
                ref="turnstileContainer"
                :key="turnstileContainerKey"
@@ -140,10 +136,6 @@
             </div>
           </template>
         </el-input>
-        <el-input v-if="settingStore.settings.regKey === 0" v-model="bindForm.code" :placeholder="$t('regKey')"
-                  type="text" autocomplete="off" @keyup.enter="bind"/>
-        <el-input v-if="settingStore.settings.regKey === 2" v-model="bindForm.code"
-                  :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="bind"/>
         <el-button class="btn" type="primary" @click="bind" :loading="bindLoading"
         >绑定
         </el-button>
@@ -168,7 +160,7 @@ import {useAccountStore} from "@/store/account.js";
 import {useUserStore} from "@/store/user.js";
 import {useUiStore} from "@/store/ui.js";
 import {Icon} from "@iconify/vue";
-import {cvtR2Url} from "@/utils/convert.js";
+import {cvtFileUrl} from "@/utils/convert.js";
 import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
@@ -208,8 +200,7 @@ const oauthProviders = computed(() => {
 
 const bindForm = reactive({
   email: '',
-  oauthUserId: '',
-  code: ''
+  oauthUserId: ''
 })
 
 const form = reactive({
@@ -222,8 +213,7 @@ const suffix = ref('')
 const registerForm = reactive({
   email: '',
   password: '',
-  confirmPassword: '',
-  code: null
+  confirmPassword: ''
 })
 const domainList = computed(() => settingStore.domainList || []);
 const registerLoading = ref(false)
@@ -300,7 +290,7 @@ const showLoginDomain = computed(() => !hideLoginDomain.value && !form.email.inc
 const background = computed(() => {
 
   return settingStore.settings.background ? {
-    'background-image': `url(${cvtR2Url(settingStore.settings.background)})`,
+    'background-image': `url(${cvtFileUrl(settingStore.settings.background)})`,
     'background-repeat': 'no-repeat',
     'background-size': 'cover',
     'background-position': 'center'
@@ -419,21 +409,7 @@ function bind() {
 
   if (!canCreateEmail(email)) return
 
-  if (settingStore.settings.regKey === 0) {
-
-    if (!bindForm.code) {
-
-      ElMessage({
-        message: t('emptyRegKeyMsg'),
-        type: 'error',
-        plain: true,
-      })
-      return
-    }
-
-  }
-
-  const form = {email, oauthUserId: bindForm.oauthUserId, code: bindForm.code}
+  const form = {email, oauthUserId: bindForm.oauthUserId}
 
   bindLoading.value = true
   oauthBindUser(form).then(data => {
@@ -575,20 +551,6 @@ function submitRegister() {
     return
   }
 
-  if (settingStore.settings.regKey === 0) {
-
-    if (!registerForm.code) {
-
-      ElMessage({
-        message: t('emptyRegKeyMsg'),
-        type: 'error',
-        plain: true,
-      })
-      return
-    }
-
-  }
-
   if (!verifyToken && (settingStore.settings.registerVerify === 0 || (settingStore.settings.registerVerify === 2 && settingStore.settings.regVerifyOpen))) {
     if (turnstileRecoveryAttempted) return
     if (!verifyShow.value) {
@@ -624,8 +586,7 @@ function submitRegister() {
   const form = {
     email,
     password: registerForm.password,
-    token: verifyToken,
-    code: registerForm.code
+    token: verifyToken
   }
 
   register(form).then(({regVerifyOpen}) => {
@@ -633,7 +594,6 @@ function submitRegister() {
     registerForm.email = ''
     registerForm.password = ''
     registerForm.confirmPassword = ''
-    registerForm.code = ''
     registerLoading.value = false
     verifyToken = ''
     settingStore.settings.regVerifyOpen = regVerifyOpen

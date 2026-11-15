@@ -71,7 +71,7 @@
                 <div class="att-size">{{ formatBytes(att.size) }}</div>
                 <div class="opt-icon att-icon">
                   <Icon v-if="isImage(att.filename)" icon="hugeicons:view" width="22" height="22" @click="showImage(att.key)"/>
-                  <a :href="cvtR2Url(att.key)" download>
+                  <a :href="cvtFileUrl(att.key)" download>
                     <Icon icon="system-uicons:push-down" width="22" height="22"/>
                   </a>
                 </div>
@@ -101,9 +101,8 @@ import {useAccountStore} from "@/store/account.js";
 import {formatDetailDate} from "@/utils/day.js";
 import {starAdd, starCancel} from "@/request/star.js";
 import {getExtName, formatBytes} from "@/utils/file-utils.js";
-import {cvtR2Url,toOssDomain} from "@/utils/convert.js";
+import {cvtFileUrl} from "@/utils/convert.js";
 import {getIconByName} from "@/utils/icon-utils.js";
-import {useSettingStore} from "@/store/setting.js";
 import {allEmailDelete} from "@/request/all-email.js";
 import {useUiStore} from "@/store/ui.js";
 import {useI18n} from "vue-i18n";
@@ -124,7 +123,6 @@ function deliveryTag(state) {
 }
 
 const uiStore = useUiStore();
-const settingStore = useSettingStore();
 const accountStore = useAccountStore();
 const emailStore = useEmailStore();
 const router = useRouter()
@@ -262,13 +260,12 @@ function toMessage(message) {
 
 function formatImage(content) {
   content = content || '';
-  const domain = settingStore.settings.r2Domain;
-  return  content.replace(/{{domain}}/g, toOssDomain(domain) + '/');
+  return content.replace(/{{domain}}/g, import.meta.env.BASE_URL);
 }
 
 function showImage(key) {
   if (!isImage(key)) return;
-  const url = cvtR2Url(key)
+  const url = cvtFileUrl(key)
   srcList.length = 0
   srcList.push(url)
   showPreview.value = true

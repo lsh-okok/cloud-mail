@@ -68,6 +68,14 @@ const migrations = [
 		up(db) {
 			db.exec(ADMINISTRATOR_SCHEMA);
 		}
+	},
+	{
+		version: 7,
+		name: 'remove-registration-key-permissions',
+		up(db) {
+			db.exec(`DELETE FROM role_perm WHERE perm_id IN (SELECT perm_id FROM perm WHERE perm_id = 33 OR pid = 33);
+				DELETE FROM perm WHERE perm_id = 33 OR pid = 33;`);
+		}
 	}
 ];
 
@@ -120,7 +128,6 @@ export async function bootstrapAdmin(env) {
 	if (env.kv) {
 		const settingRow = (env.orm || drizzle(db)).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
-		settingRow.r2Domain = '';
 		await env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
 	}
 	if (!existing) existing = db.prepare('SELECT user_id FROM site_administrator ORDER BY granted_at,user_id LIMIT 1').get();

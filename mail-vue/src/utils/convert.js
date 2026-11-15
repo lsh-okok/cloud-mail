@@ -1,5 +1,4 @@
-import {useSettingStore} from "@/store/setting.js";
-export function cvtR2Url(key) {
+export function cvtFileUrl(key) {
 
     if (!key) {
         return ''
@@ -9,26 +8,10 @@ export function cvtR2Url(key) {
         return key
     }
 
-    const { settings } = useSettingStore();
-
-    let domain = settings.r2Domain
-
-    // No public CDN domain: serve via this site's /attachments|/static|/oss proxy
-    if (!domain) {
-        return import.meta.env.BASE_URL + String(key).replace(/^\//, '')
-    }
-
-    if (!domain.startsWith('http')) {
-        return 'https://' + domain + '/' + key
-    }
-
-    if (domain.endsWith("/")) {
-        domain = domain.slice(0, -1);
-    }
-    return domain + '/' + key
+    return import.meta.env.BASE_URL + String(key).replace(/^\//, '')
 }
 
-export function toOssDomain(domain) {
+export function normalizeUrl(domain) {
 
     if (!domain) {
         return ''

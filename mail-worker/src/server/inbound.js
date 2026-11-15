@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import PostalMimeModule from 'postal-mime';
 import { parseHTML } from 'linkedom';
-import r2Service from '../service/r2-service.js';
 import telegramService from '../service/telegram-service.js';
 import webhookService from '../service/webhook-service.js';
 import aiService from '../service/ai-service.js';
@@ -43,7 +42,7 @@ export async function persistAttachments(env, attachments) {
     const key = 'attachments/' + digest(content).slice(0, 32) + ext;
     const filename = String(source.filename || 'attachment').replace(/[\r\n\0]/g, '');
     const mimeType = source.mimeType || source.contentType || 'application/octet-stream';
-    await r2Service.putObj({ env }, key, content, {
+    await env.storage.put(key, content, {
       contentType: mimeType,
       contentDisposition: `${source.contentId ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(filename)}`
     });

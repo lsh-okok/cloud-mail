@@ -7,12 +7,11 @@ import '../api/login-api';
 import '../api/setting-api';
 import '../api/account-api';
 import '../api/star-api';
-import '../api/r2-api';
+import '../api/file-api';
 import '../api/my-api';
 import '../api/role-api'
 import '../api/all-email-api'
 import '../api/analysis-api'
-import '../api/reg-key-api'
 import '../api/public-api'
 import '../api/telegram-api'
 import '../api/oauth-api'

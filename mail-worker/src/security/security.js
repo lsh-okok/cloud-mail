@@ -52,12 +52,7 @@ const requirePerms = [
 	'/user/resetSendCount',
 	'/user/add',
 	'/user/deleteAccount',
-	'/user/allAccount',
-	'/regKey/add',
-	'/regKey/list',
-	'/regKey/delete',
-	'/regKey/clearNotUse',
-	'/regKey/history'
+	'/user/allAccount'
 ];
 
 const premKey = {
@@ -83,9 +78,6 @@ const premKey = {
 	'setting:query': ['/setting/query'],
 	'setting:set': ['/setting/set', '/setting/setBackground','/setting/deleteBackground','/setting/setBlacklist'],
 	'analysis:query': ['/analysis/echarts'],
-	'reg-key:add': ['/regKey/add'],
-	'reg-key:query': ['/regKey/list','/regKey/history'],
-	'reg-key:delete': ['/regKey/delete','/regKey/clearNotUse'],
 };
 
 app.use('*', async (c, next) => {

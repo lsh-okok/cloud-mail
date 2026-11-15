@@ -1,14 +1,11 @@
 import orm from '../entity/orm';
 import { att } from '../entity/att';
 import { and, eq, isNull, inArray, desc } from 'drizzle-orm';
-import r2Service from './r2-service';
 import constant from '../const/constant';
 import fileUtils from '../utils/file-utils';
 import { attConst } from '../const/entity-const';
 import { parseHTML } from 'linkedom';
 import { v4 as uuidv4 } from 'uuid';
-import domainUtils from '../utils/domain-uitls';
-import settingService from "./setting-service";
 
 const attService = {
 
@@ -27,7 +24,7 @@ const attService = {
 				metadate.cacheControl = `max-age=259200`
 			}
 
-			await r2Service.putObj(c, attachment.key, attachment.content, metadate);
+			await c.env.storage.put(attachment.key, attachment.content, metadate);
 
 		}
 
@@ -48,8 +45,6 @@ const attService = {
 	},
 
 	async toImageUrlHtml(c, content) {
-
-		const { r2Domain } = await settingService.query(c);
 
 		const { document } = parseHTML(content);
 
@@ -82,20 +77,16 @@ const attService = {
 			}
 
 			//邮件正文站内图片转cid附件
-			if (src && (src.startsWith(domainUtils.toOssDomain(r2Domain)) || src.startsWith('attachments/'))) {
+			const localPrefix = (c.env.base_path || '') + '/';
+			const localKey = src?.startsWith(localPrefix) ? src.slice(localPrefix.length) : src;
+			if (localKey?.startsWith('attachments/')) {
 
 				const cid = uuidv4().replace(/-/g, '')
 				img.setAttribute('src', 'cid:' + cid);
 
 				const attData = {};
 
-				if (src.startsWith(domainUtils.toOssDomain(r2Domain))) {
-					attData.key = src.replace(domainUtils.toOssDomain(r2Domain) + '/','');
-				}
-
-				if (src.startsWith('attachments/')) {
-					attData.key = src;
-				}
+				attData.key = localKey;
 
 				attData.contentId = cid;
 				attData.type = attConst.type.EMBED;
@@ -133,7 +124,7 @@ const attService = {
 			image.mimeType = dbImage.mimeType;
 			image.contentType = dbImage.mimeType;
 
-			const obj = await r2Service.getObj(c, image.key);
+			const obj = await c.env.storage.get(image.key);
 			if (!obj) {
 				return;
 			}
@@ -165,7 +156,7 @@ const attService = {
 		await orm(c).insert(att).values(attDataList).run();
 
 		for (let att of attList) {
-			await r2Service.putObj(c, att.key, att.buff, {
+			await c.env.storage.put(att.key, att.buff, {
 				contentType: att.type,
 				contentDisposition: `attachment;filename=${att.filename}`
 			});
@@ -183,7 +174,7 @@ const attService = {
 			if (!attData.buff) {
 				continue;
 			}
-			await r2Service.putObj(c, attData.key, attData.buff, {
+			await c.env.storage.put(attData.key, attData.buff, {
 				contentType: attData.mimeType,
 				cacheControl: `max-age=259200`,
 				contentDisposition: `inline;filename=${attData.filename}`
@@ -243,7 +234,7 @@ const attService = {
 
 		for (let i = 0; i < keys.length; i += BATCH_SIZE) {
 			const batch = keys.slice(i, i + BATCH_SIZE);
-			await r2Service.delete(c, batch);
+			await c.env.storage.delete(batch);
 		}
 
 	},

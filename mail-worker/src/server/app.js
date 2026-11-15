@@ -3,7 +3,6 @@ import { bodyLimit } from 'hono/body-limit';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { join } from 'node:path';
 import api from '../hono/webs.js';
-import r2Service from '../service/r2-service.js';
 import { createFeatureRouter } from '../modules/router.js';
 import { resolveClientIp } from '../modules/shared/proxy.js';
 import { resolvePublicLink, validatePublicLink, countLinkVisit, confirmPublicAccess } from '../modules/public-mail/service.js';
@@ -67,7 +66,7 @@ function createRoutes(env) {
   });
   const objectResponse = async c => {
     const key = c.req.path.startsWith('/oss/') ? c.req.path.slice(5) : c.req.path.slice(1);
-    const response = await r2Service.toObjResp(c, key);
+    const response = await c.env.storage.get(key);
     return response || c.notFound();
   };
   app.get('/oss/*', objectResponse);

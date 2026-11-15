@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS user (
  password TEXT NOT NULL, salt TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0,
  create_time TEXT DEFAULT CURRENT_TIMESTAMP, active_time TEXT, create_ip TEXT, active_ip TEXT,
  os TEXT, browser TEXT, device TEXT, sort INTEGER NOT NULL DEFAULT 0,
- send_count INTEGER NOT NULL DEFAULT 0, reg_key_id INTEGER NOT NULL DEFAULT 0, is_del INTEGER NOT NULL DEFAULT 0
+ send_count INTEGER NOT NULL DEFAULT 0, is_del INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS account (
  account_id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
@@ -49,11 +49,6 @@ CREATE TABLE IF NOT EXISTS role (
 CREATE TABLE IF NOT EXISTS role_perm (
  id INTEGER PRIMARY KEY AUTOINCREMENT, role_id INTEGER, perm_id INTEGER
 );
-CREATE TABLE IF NOT EXISTS reg_key (
- rege_key_id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL COLLATE NOCASE DEFAULT '',
- count INTEGER NOT NULL DEFAULT 0, role_id INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL DEFAULT 0,
- expire_time TEXT, create_time TEXT DEFAULT CURRENT_TIMESTAMP
-);
 CREATE TABLE IF NOT EXISTS verify_record (
  vr_id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL DEFAULT 1,
  type INTEGER NOT NULL DEFAULT 0, update_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -68,8 +63,8 @@ CREATE TABLE IF NOT EXISTS setting (
  many_email INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT 'Cloud Mail', auto_refresh INTEGER NOT NULL DEFAULT 5,
  register_verify INTEGER NOT NULL DEFAULT 1, add_email_verify INTEGER NOT NULL DEFAULT 1,
  reg_verify_count INTEGER NOT NULL DEFAULT 1, add_verify_count INTEGER NOT NULL DEFAULT 1,
- send INTEGER NOT NULL DEFAULT 0, r2_domain TEXT, secret_key TEXT, site_key TEXT,
- reg_key INTEGER NOT NULL DEFAULT 1, background TEXT, tg_bot_token TEXT NOT NULL DEFAULT '',
+ send INTEGER NOT NULL DEFAULT 0, secret_key TEXT, site_key TEXT,
+ background TEXT, tg_bot_token TEXT NOT NULL DEFAULT '',
  tg_chat_id TEXT NOT NULL DEFAULT '', tg_bot_status INTEGER NOT NULL DEFAULT 1,
  forward_email TEXT NOT NULL DEFAULT '', forward_status INTEGER NOT NULL DEFAULT 1,
  rule_email TEXT NOT NULL DEFAULT '', rule_type INTEGER NOT NULL DEFAULT 0,
@@ -79,8 +74,6 @@ CREATE TABLE IF NOT EXISTS setting (
  notice_position TEXT NOT NULL DEFAULT 'top-right', notice_offset INTEGER NOT NULL DEFAULT 0,
  notice_width INTEGER NOT NULL DEFAULT 340, notice INTEGER NOT NULL DEFAULT 0,
  no_recipient INTEGER NOT NULL DEFAULT 1, login_domain INTEGER NOT NULL DEFAULT 0,
- bucket TEXT NOT NULL DEFAULT '', region TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '',
- s3_access_key TEXT NOT NULL DEFAULT '', s3_secret_key TEXT NOT NULL DEFAULT '', force_path_style INTEGER NOT NULL DEFAULT 1,
  custom_domain TEXT NOT NULL DEFAULT '', tg_msg_from TEXT NOT NULL DEFAULT 'only-name',
  tg_msg_to TEXT NOT NULL DEFAULT 'show', tg_msg_text TEXT NOT NULL DEFAULT 'show',
  min_email_prefix INTEGER NOT NULL DEFAULT 1, email_prefix_filter TEXT NOT NULL DEFAULT '',
@@ -95,7 +88,6 @@ CREATE TABLE IF NOT EXISTS setting (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_account_email_nocase ON account(email COLLATE NOCASE);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_email_nocase ON user(email COLLATE NOCASE);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_code ON reg_key(code COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_email_user_id_account_id ON email(user_id, account_id);
 CREATE INDEX IF NOT EXISTS idx_email_list_user ON email(user_id, type, is_del, email_id);
 CREATE INDEX IF NOT EXISTS idx_email_list_account ON email(user_id, account_id, type, is_del, email_id);
@@ -136,7 +128,5 @@ export const PERMISSIONS = [
 	[25, '用户添加', 'user:add', 6, 2, 1], [26, '发件重置', 'user:reset-send', 6, 2, 6],
 	[27, '邮件列表', '', 0, 1, 4], [28, '邮件查看', 'all-email:query', 27, 2, 0],
 	[29, '邮件删除', 'all-email:delete', 27, 2, 0], [30, '身份添加', 'role:add', 13, 2, -1],
-	[31, '分析页', null, 0, 1, 2.1], [32, '数据查看', 'analysis:query', 31, 2, 1],
-	[33, '注册密钥', null, 0, 1, 5.1], [34, '密钥查看', 'reg-key:query', 33, 2, 0],
-	[35, '密钥添加', 'reg-key:add', 33, 2, 1], [36, '密钥删除', 'reg-key:delete', 33, 2, 2]
+	[31, '分析页', null, 0, 1, 2.1], [32, '数据查看', 'analysis:query', 31, 2, 1]
 ];

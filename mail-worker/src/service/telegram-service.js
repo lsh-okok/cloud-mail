@@ -31,8 +31,7 @@ const telegramService = {
 		if (emailRow) {
 
 			if (emailRow.content) {
-				const { r2Domain } = await settingService.query(c);
-				return emailHtmlTemplate(emailRow.content || '', r2Domain)
+				return emailHtmlTemplate(emailRow.content || '', c.env.app_url + (c.env.base_path || ''))
 			} else {
 				return emailTextTemplate(emailRow.text || '')
 			}

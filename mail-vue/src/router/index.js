@@ -2,7 +2,7 @@ import {createRouter, createWebHistory} from 'vue-router'
 import NProgress from 'nprogress';
 import {useUiStore} from "@/store/ui.js";
 import {useSettingStore} from "@/store/setting.js";
-import {cvtR2Url} from "@/utils/convert.js";
+import {cvtFileUrl} from "@/utils/convert.js";
 
 const routes = [
     {
@@ -141,7 +141,7 @@ function loadBackground(next) {
 
     if (settingStore.settings.background) {
 
-        const src = cvtR2Url(settingStore.settings.background);
+        const src = cvtFileUrl(settingStore.settings.background);
 
         const img = new Image();
         img.src = src;

@@ -25,24 +25,6 @@
                 </div>
               </div>
               <div class="setting-item">
-                <div><span>{{ $t('regKey') }}</span></div>
-                <div>
-                  <el-select
-                      @change="change"
-                      :style="`width: ${ locale === 'en' ?  100 : 80 }px;`"
-                      v-model="setting.regKey"
-                      placeholder="Select"
-                  >
-                    <el-option
-                        v-for="item in regKeyOptions"
-                        :key="item.value"
-                        :label="item.label"
-                        :value="item.value"
-                    />
-                  </el-select>
-                </div>
-              </div>
-              <div class="setting-item">
                 <div><span>{{ $t('addAccount') }}</span></div>
                 <div>
                   <el-switch @change="change" :before-change="beforeChange" :active-value="0" :inactive-value="1"
@@ -111,8 +93,8 @@
                 <div>
                   <el-image
                       class="background"
-                      :src="cvtR2Url(setting.background)"
-                      :preview-src-list="[cvtR2Url(setting.background)]"
+                      :src="cvtFileUrl(setting.background)"
+                      :preview-src-list="[cvtFileUrl(setting.background)]"
                       show-progress
                       fit="cover"
                   >
@@ -259,33 +241,6 @@
                   <el-button class="opt-button" size="small" type="primary" @click="openForwardRules">
                     <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
                   </el-button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Object Storage Card -->
-          <div class="settings-card">
-            <div class="card-title">{{ $t('oss') }}</div>
-            <div class="card-content">
-              <div class="setting-item">
-                <div>
-                  <span>{{ $t('s3Configuration') }}</span>
-                </div>
-                <div class="r2domain">
-                  <el-button class="opt-button" size="small" type="primary" @click="addS3Show = true">
-                    <Icon icon="fluent:settings-48-regular" width="16" height="16"/>
-                  </el-button>
-                </div>
-              </div>
-              <div class="setting-item">
-                <div>
-                  <span>{{ $t('storageType') }}</span>
-                </div>
-                <div class="r2domain">
-                  <div class="storage-type">
-                    <el-tag>{{ setting.storageType }}</el-tag>
-                  </div>
                 </div>
               </div>
             </div>
@@ -805,30 +760,6 @@ Authorization: &lt;secret&gt;</pre>
           </div>
         </template>
       </el-dialog>
-      <el-dialog v-model="addS3Show" :title="t('s3Configuration')" width="340" @closed="resetAddS3Form">
-        <form @submit.prevent>
-          <el-input class="dialog-input" type="text" placeholder="Bucket" v-model="s3.bucket" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" placeholder="Endpoint" v-model="s3.endpoint" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" placeholder="Region" v-model="s3.region" @keyup.enter="saveS3"/>
-          <el-input class="dialog-input" type="text" :placeholder="setting.s3AccessKey || 'Access key'"
-                    v-model="s3.s3AccessKey" @keyup.enter="saveS3"/>
-          <el-input style="margin-bottom: 10px" type="text" :placeholder="setting.s3SecretKey || 'Secret key'" v-model="s3.s3SecretKey" @keyup.enter="saveS3"/>
-          <div class="force-path-style">
-            <div class="force-path-style-left">
-              <span>ForcePathStyle</span>
-              <el-tooltip effect="dark" :content="$t('forcePathStyleDesc')">
-                <Icon class="warning" icon="fe:warning" width="18" height="18"/>
-              </el-tooltip>
-            </div>
-            <el-switch :before-change="beforeChange" :active-value="0" :inactive-value="1"
-                       v-model="s3.forcePathStyle"/>
-          </div>
-          <div class="s3-button">
-            <el-button :loading="clearS3Loading" @click="clearS3">{{ t('clear') }}</el-button>
-            <el-button type="primary" :loading="settingLoading && !clearS3Loading" @click="saveS3">{{ t('save') }}</el-button>
-          </div>
-        </form>
-      </el-dialog>
       <el-dialog v-model="emailPrefixShow" :title="t('emailPrefix')"  @closed="resetEmailPrefix"  >
         <div class="email-prefix">
           <div>{{ t('atLeast') }}</div>
@@ -910,7 +841,7 @@ import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
 import {useAccountStore} from "@/store/account.js";
 import {Icon} from "@iconify/vue";
-import {cvtR2Url, toOssDomain} from "@/utils/convert.js";
+import {cvtFileUrl, normalizeUrl} from "@/utils/convert.js";
 import {storeToRefs} from "pinia";
 import {debounce} from 'lodash-es'
 import {isDomain, isEmail, isIpUrl} from "@/utils/verify-utils.js";
@@ -952,7 +883,6 @@ const uiStore = useUiStore();
 const {settings: setting} = storeToRefs(settingStore);
 const editTitle = ref('')
 const settingLoading = ref(false)
-const clearS3Loading = ref(false)
 const loginOpacity = ref(0)
 const minEmailPrefix = ref(0)
 const emailPrefixFilter = ref([])
@@ -964,7 +894,6 @@ const showSetBackground = ref(false)
 let regVerifyCount = ref(1)
 let addVerifyCount = ref(1)
 let backup = '{}'
-const addS3Show = ref(false)
 const addVerifyCountShow = ref(false)
 const regVerifyCountShow = ref(false)
 const resendTokenForm = reactive({
@@ -990,15 +919,6 @@ const oauthForm = reactive({
   switch: 1,
 })
 
-const s3 = reactive({
-  bucket: '',
-  endpoint: '',
-  region: '',
-  s3AccessKey: '',
-  s3SecretKey: '',
-  forcePathStyle: 1
-})
-
 const noticeForm = reactive({
   noticeTitle: '',
   noticeContent: '',
@@ -1009,12 +929,6 @@ const noticeForm = reactive({
   notice: 0,
   noticeWidth: 0
 })
-
-const regKeyOptions = computed(() => [
-  {label: t('enable'), value: 0},
-  {label: t('disable'), value: 1},
-  {label: t('optional'), value: 2},
-])
 
 const blackListForm = ref({
   blackSubject: [],
@@ -1085,7 +999,6 @@ function getSettings() {
     addVerifyCount.value = setting.value.addVerifyCount
     regVerifyCount.value = setting.value.regVerifyCount
     resetNoticeForm()
-    resetAddS3Form()
     resetEmailPrefix()
     resetBlackList()
     resetAiCodeFilter()
@@ -1108,15 +1021,6 @@ function openAddVerifyCount() {
 function openRegVerifyCount() {
   if (settingLoading.value) return
   regVerifyCountShow.value = true
-}
-
-function resetAddS3Form() {
-  s3.bucket = setting.value.bucket
-  s3.endpoint = setting.value.endpoint
-  s3.region = setting.value.region
-  s3.s3AccessKey = ''
-  s3.s3SecretKey = ''
-  s3.forcePathStyle = setting.value.forcePathStyle
 }
 
 const resendList = computed(() => {
@@ -1312,35 +1216,6 @@ function addChatTag(val) {
   })
 }
 
-function clearS3() {
-
-  const form = {
-    bucket: '',
-    endpoint: '',
-    region: '',
-    s3AccessKey: '',
-    s3SecretKey: '',
-    forcePathStyle: 1
-  }
-  clearS3Loading.value = true
-  editSetting(form)
-}
-
-function saveS3() {
-
-  const form = {
-    bucket: s3.bucket,
-    endpoint: s3.endpoint,
-    region: s3.region,
-    forcePathStyle: s3.forcePathStyle
-  }
-
-  if (s3.s3AccessKey) form.s3AccessKey = s3.s3AccessKey
-  if (s3.s3SecretKey) form.s3SecretKey = s3.s3SecretKey
-
-  editSetting(form)
-}
-
 function tgBotSave() {
   const form = {
     customDomain: customDomain.value,
@@ -1367,7 +1242,7 @@ function webhookSave() {
   if (isNaN(retry) || retry < 0) {
     retry = 0
   }
-  const url = toOssDomain(webhookUrl.value.trim())
+  const url = normalizeUrl(webhookUrl.value.trim())
   if (isIpUrl(url)) {
     ElMessage({
       message: t('webhookIpNotSupported'),
@@ -1651,8 +1526,6 @@ function change(e) {
   const settingForm = {...setting.value}
   delete settingForm.siteKey
   delete settingForm.secretKey
-  delete settingForm.s3AccessKey
-  delete settingForm.s3SecretKey
   delete settingForm.tgBotToken
   delete settingForm.resendTokens
   editSetting(settingForm, false)
@@ -1702,7 +1575,6 @@ function editSetting(settingForm, refreshStatus = true) {
     addVerifyCountShow.value = false
     regVerifyCountShow.value = false
     noticePopupShow.value = false
-    addS3Show.value = false
     emailPrefixShow.value = false
     aiCodeFilterShow.value = false
     autoCleanShow.value = false
@@ -1712,7 +1584,6 @@ function editSetting(settingForm, refreshStatus = true) {
     setting.value = {...setting.value, ...JSON.parse(backup)}
   }).finally(() => {
     settingLoading.value = false
-    clearS3Loading.value = false
   })
 }
 </script>
@@ -2100,37 +1971,6 @@ function editSetting(settingForm, refreshStatus = true) {
   flex-direction: column;
 }
 
-.s3-button {
-  display: grid;
-  grid-template-columns: 80px 1fr;
-  gap: 15px;
-
-  .el-button {
-    margin-left: 0;
-  }
-}
-
-.r2domain {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-
-  .storage-type {
-    margin-right: 3px;
-  }
-
-  span {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  .el-button {
-    width: 48px;
-    margin: 0 0 0 10px;
-  }
-}
-
 .personalized {
   align-items: start;
 
@@ -2147,20 +1987,6 @@ function editSetting(settingForm, refreshStatus = true) {
 
 .dialog-input {
   margin-bottom: 15px;
-}
-
-.force-path-style {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  .force-path-style-left {
-    padding-left: 2px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 5px;
-  }
 }
 
 .concerning-item {

@@ -3,7 +3,6 @@ import setting from '../entity/setting';
 import orm from '../entity/orm';
 import {verifyRecordType} from '../const/entity-const';
 import fileUtils from '../utils/file-utils';
-import r2Service from './r2-service';
 import constant from '../const/constant';
 import BizError from '../error/biz-error';
 import {t} from '../i18n/i18n'
@@ -17,7 +16,6 @@ const settingService = {
 	async refresh(c) {
 		const settingRow = await orm(c).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
-		settingRow.r2Domain = '';
 		settingRow.aiCode = 1;
 		c.set('setting', settingRow);
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
@@ -70,10 +68,7 @@ const settingService = {
 			settingRow.resendTokens[key] = `${settingRow.resendTokens[key].slice(0, 12)}******`;
 		});
 
-		settingRow.s3AccessKey = settingRow.s3AccessKey ? `${settingRow.s3AccessKey.slice(0, 12)}******` : null;
-		settingRow.s3SecretKey = settingRow.s3SecretKey ? `${settingRow.s3SecretKey.slice(0, 12)}******` : null;
 		settingRow.tgBotToken = settingRow.tgBotToken ? `${settingRow.tgBotToken.slice(0, 20)}******` : null;
-		settingRow.hasR2 = !!c.env.r2
 		settingRow.hasCfEmail = !!c.env.email
 		settingRow.mailProvider = 'postfix';
 		settingRow.mailHost = c.env.server.hostname;
@@ -93,8 +88,6 @@ const settingService = {
 
 		settingRow.regVerifyOpen = regVerifyOpen
 		settingRow.addVerifyOpen = addVerifyOpen
-
-		settingRow.storageType = await r2Service.storageType(c);
 
 		return settingRow;
 	},
@@ -138,7 +131,7 @@ const settingService = {
 		}
 
 		if (background) {
-			await r2Service.delete(c,background)
+			await c.env.storage.delete(background)
 			await orm(c).update(setting).set({ background: '' }).run();
 			await this.refresh(c)
 		}
@@ -158,7 +151,7 @@ const settingService = {
 			background = constant.BACKGROUND_PREFIX + await fileUtils.getBuffHash(arrayBuffer) + fileUtils.getExtFileName(file.name);
 
 
-			await r2Service.putObj(c, background, arrayBuffer, {
+			await c.env.storage.put(background, arrayBuffer, {
 				contentType: file.type,
 				cacheControl: `public, max-age=31536000, immutable`,
 				contentDisposition: `inline; filename="${file.name}"`
@@ -193,13 +186,11 @@ const settingService = {
 			addEmailVerify: settingRow.addEmailVerify,
 			registerVerify: settingRow.registerVerify,
 			send: settingRow.send,
-			r2Domain: settingRow.r2Domain,
 			siteKey: settingRow.siteKey,
 			background: settingRow.background,
 			loginOpacity: settingRow.loginOpacity,
 			domainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
 			loginDomainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
-			regKey: settingRow.regKey,
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,
 			noticeTitle: settingRow.noticeTitle,

@@ -56,6 +56,6 @@ Windows 终端的 Ctrl+C 未传递给预览进程，本次使用终止该测试�
 - NPM 网页 HTTPS、真实证书挂载与续期。
 - 公网 A/MX/PTR/SPF/DKIM/DMARC，远端邮箱的认证结果和实际收发。
 - 公网 MX 直投、目标邮箱服务商信誉/反垃圾规则。
-- 配置真实 Telegram、Webhook、OAuth 和可选 S3/Turnstile 凭据后的联调。
+- 配置真实 Telegram、Webhook、OAuth 和可选 Turnstile 凭据后的联调。
 
 生产部署与操作步骤见 [server-deployment.md](server-deployment.md)，配置模板见 [../.env.example](../.env.example)。

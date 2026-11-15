@@ -31,7 +31,7 @@
 | 邮件读取 | 本地 SQLite 已有邮件及 SMTP 信封收件地址 | 复用本地持久收信；外部邮箱适配不在当前范围 |
 | MX 收件隔离 | `server/inbound.js:101` 保留完整信封地址；`server/policy.js:53` 可将 plus 地址归入同一账号 | 公共读取精确匹配信封完整地址，不能只按 accountId 查询 |
 | 既有公共 API | `service/public-service.js:21` 是持全站开放 API Token 的邮件检索 | 不作为匿名链接接口直接开放；新接口只能读取链接授权范围 |
-| 卡密 | 现有 `reg-key` 是注册邀请密钥；历史新卡密规则仅面向外部来源 | 保留注册邀请含义；本地卡密与公开兑换不在当前交付 |
+| 卡密 | 历史新卡密规则仅面向外部来源；注册邀请密钥功能已移除 | 本地卡密与公开兑换不在当前交付 |
 | 认证授权 | `security/security.js:112` 使用 Authorization JWT 和服务端 Token 列表；旧路径权限白名单不能覆盖新路由 | 新管理路由显式管理员校验；写请求增加来源/CSRF 校验，不假设当前已有 Cookie 会话 |
 | API 边界 | `hono/hono.js:7` 全局 CORS；业务错误主要封装为 JSON，未统一真实 HTTP 状态 | 新模块独立 Router、错误处理和 CORS；公开接口返回真实状态码 |
 | 后台任务 | `server/mail-schema.js:8` 有投递 outbox；没有导入/验证任务与检测项模型 | 新建持久任务系统；验证复检不进入普通 outbox 的重试逻辑 |

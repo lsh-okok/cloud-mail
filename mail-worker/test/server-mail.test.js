@@ -16,7 +16,6 @@ import { prepareOutbound, insertOutbox, flushOutbox, applyPostfixLine, pollPostf
   outboxStatus, retryUncertainOutbox } from '../src/server/delivery.js';
 import emailService from '../src/service/email-service.js';
 import telegramService from '../src/service/telegram-service.js';
-import r2Service from '../src/service/r2-service.js';
 import settingService from '../src/service/setting-service.js';
 
 const resources = [];
@@ -126,7 +125,7 @@ describe('durable inbound mail', () => {
     expect(stored.bcc).toBe('[]');
     expect(stored.recipient).toContain('visible@outside.test');
     const attachment = env.db.prepare('SELECT * FROM attachments WHERE email_id=?').get(result.emailId);
-    const object = await r2Service.toObjResp({ env }, attachment.key);
+    const object = await env.storage.get(attachment.key);
     expect(Buffer.from(await object.arrayBuffer())).toEqual(Buffer.from([0, 255, 1, 0]));
     expect((await receiveInbound(env, { raw: message.raw, recipient: 'admin+private@example.com', sender: 'sender@outside.test' })).duplicate).toBe(true);
     expect(env.db.prepare('SELECT count(*) AS n FROM email').get().n).toBe(1);

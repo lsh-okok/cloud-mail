@@ -35,7 +35,7 @@
           <Icon icon="fluent:settings-48-regular" width="20" height="20" />
           <span class="menu-name" style="margin-left: 16px">{{$t('settings')}}</span>
         </el-menu-item>
-        <div class="manage-title" v-perm="['all-email:query','user:query','role:query','setting:query','analysis:query','reg-key:query']">
+        <div class="manage-title" v-perm="['all-email:query','user:query','role:query','setting:query','analysis:query']">
           <div>{{$t('manage')}}</div>
         </div>
         <el-menu-item @click="router.push({name: 'mailboxes'})" index="mailboxes" v-perm="'*'"
@@ -82,11 +82,6 @@
                       :class="route.meta.name === 'role' ? 'choose-item' : ''">
           <Icon icon="fluent:lock-closed-16-regular" width="22" height="22" />
           <span class="menu-name" style="margin-left: 15px">{{$t('permissions')}}</span>
-        </el-menu-item>
-        <el-menu-item @click="router.push({name: 'reg-key'})" index="reg-key" v-perm="'reg-key:query'"
-                      :class="route.meta.name === 'reg-key' ? 'choose-item' : ''">
-          <Icon icon="fluent:fingerprint-20-filled" width="22" height="22" />
-          <span class="menu-name" style="margin-left: 15px">{{$t('inviteCode')}}</span>
         </el-menu-item>
         <el-menu-item @click="router.push({name: 'sys-setting'})" index="sys-setting" v-perm="'setting:query'"
                       :class="route.meta.name === 'sys-setting' ? 'choose-item' : ''">

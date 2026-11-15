@@ -121,16 +121,6 @@ const routers = {
             menu: true
         }
     }],
-    'reg-key:query': [{
-        path: '/invite-code',
-        name: 'reg-key',
-        component: () => import('@/views/reg-key/index.vue'),
-        meta: {
-            title: 'inviteCode',
-            name: 'reg-key',
-            menu: true
-        }
-    }],
     'all-email:query': [{
         path: '/all-mail',
         name: 'all-email',

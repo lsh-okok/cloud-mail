@@ -19,14 +19,11 @@ import { oauth } from '../src/entity/oauth.js';
 import role from '../src/entity/role.js';
 import perm from '../src/entity/perm.js';
 import rolePerm from '../src/entity/role-perm.js';
-import regKey from '../src/entity/reg-key.js';
 import { star } from '../src/entity/star.js';
 import verifyRecord from '../src/entity/verify-record.js';
 import attService from '../src/service/att-service.js';
 import publicService from '../src/service/public-service.js';
 import analysisDao from '../src/dao/analysis-dao.js';
-import { buildContentMD5Header } from '../src/service/s3-service.js';
-import regKeyService from '../src/service/reg-key-service.js';
 
 const diskFault = vi.hoisted(() => ({ failNextSync: false }));
 vi.mock('node:fs/promises', async importOriginal => {
@@ -83,7 +80,7 @@ describe('SQLite persistence and migrations', () => {
 	it('creates every ORM column and preserves data and preferences on restart', async () => {
 		const path = join(temporaryDirectory(), 'nested', 'mail.sqlite');
 		let db = database(path);
-		for (const table of [email, account, user, setting, att, oauth, role, perm, rolePerm, regKey, star, verifyRecord]) {
+		for (const table of [email, account, user, setting, att, oauth, role, perm, rolePerm, star, verifyRecord]) {
 			const config = getTableConfig(table);
 			const columns = new Set(db.prepare(`PRAGMA table_info("${config.name}")`).all().map(column => column.name));
 			for (const column of config.columns) expect(columns.has(column.name), `${config.name}.${column.name}`).toBe(true);
@@ -103,6 +100,7 @@ describe('SQLite persistence and migrations', () => {
     { version: 4, name: 'mailbox-verification-and-readonly-nodes' },
     { version: 5, name: 'managed-mail-domains' },
     { version: 6, name: 'persistent-site-administrators' },
+    { version: 7, name: 'remove-registration-key-permissions' },
   ]);
 		expect(await createKV(db).get('session', 'json')).toEqual({ userId: 42 });
 		expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
@@ -166,14 +164,16 @@ describe('SQLite persistence and migrations', () => {
 		expect((await analysisDao.numberCount(c)).userTotal).toBe(1);
 	});
 
-	it('consumes only the available invitation uses and restores a failed registration use', async () => {
+	it('removes obsolete invitation permissions when upgrading without changing active permissions', () => {
 		const db = database();
-		db.prepare('INSERT INTO reg_key (code, count, role_id) VALUES (?, 1, 1)').run('ONLY-ONCE');
-		const c = context(db);
-		expect(await Promise.all([regKeyService.consumeCount(c, 'ONLY-ONCE'), regKeyService.consumeCount(c, 'ONLY-ONCE')])).toEqual([true, false]);
-		expect(db.prepare('SELECT count FROM reg_key').get().count).toBe(0);
-		await regKeyService.restoreCount(c, 'ONLY-ONCE');
-		expect(await regKeyService.consumeCount(c, 'ONLY-ONCE')).toBe(true);
+		db.exec(`INSERT INTO perm (perm_id, name, pid) VALUES (33, 'obsolete', 0), (34, 'obsolete child', 33);
+			INSERT INTO role_perm (role_id, perm_id) VALUES (1, 34);
+			DELETE FROM schema_migrations WHERE version = 7;`);
+		const active = db.prepare('SELECT * FROM role_perm WHERE perm_id = 22').all();
+		migrateDatabase(db);
+		expect(db.prepare('SELECT * FROM perm WHERE perm_id = 33 OR pid = 33').all()).toEqual([]);
+		expect(db.prepare('SELECT * FROM role_perm WHERE perm_id = 34').all()).toEqual([]);
+		expect(db.prepare('SELECT * FROM role_perm WHERE perm_id = 22').all()).toEqual(active);
 	});
 });
 
@@ -219,12 +219,27 @@ describe('persistent KV', () => {
 	});
 });
 
-it('generates the S3 Content-MD5 header using the Node crypto implementation', () => {
-	expect(buildContentMD5Header('abc')).toEqual({ 'Content-MD5': 'kAFQmDzST7DWlj99KOF/cg==' });
-	expect(buildContentMD5Header(Buffer.from('abc'))).toEqual(buildContentMD5Header('abc'));
-});
-
 describe('local attachment storage', () => {
+	it.each([
+		['', 'attachments/inline.png'],
+		['', '/attachments/inline.png'],
+		['/mail', '/mail/attachments/inline.png'],
+	])('embeds an existing local image when replying or forwarding from %s at %s', async (basePath, imageUrl) => {
+		const db = database();
+		const storage = createStorage(temporaryDirectory());
+		const c = context(db, storage);
+		c.env.base_path = basePath;
+		await storage.put('attachments/inline.png', new Uint8Array([0, 255, 3]), { contentType: 'image/png' });
+		db.prepare('INSERT INTO attachments (user_id, account_id, email_id, key, filename, mime_type, size) VALUES (1, 1, 1, ?, ?, ?, ?)')
+			.run('attachments/inline.png', 'inline.png', 'image/png', 3);
+		const { html, imageDataList } = await attService.toImageUrlHtml(c, `<img src="${imageUrl}"><img src="https://outside.test/picture.png">`);
+		expect(imageDataList).toHaveLength(1);
+		expect([...new Uint8Array(imageDataList[0].content)]).toEqual([0, 255, 3]);
+		expect(imageDataList[0].filename).toBe('inline.png');
+		expect(html).toContain(`src="cid:${imageDataList[0].contentId}"`);
+		expect(html).toContain('src="https://outside.test/picture.png"');
+	});
+
 	it('preserves bytes and HTTP metadata across reopening and overwrites atomically', async () => {
 		const path = temporaryDirectory();
 		let storage = createStorage(path);

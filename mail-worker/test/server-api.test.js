@@ -31,7 +31,7 @@ async function fixture() {
 		return result.data.token;
 	}
 	const token = await login();
-	return { env, request, login, token };
+	return { env, app, request, login, token };
 }
 afterEach(() => {
 	for (const { root, env } of resources.splice(0)) {
@@ -56,7 +56,6 @@ describe('server API with SQLite and local storage', () => {
 		const { env, request, token } = await fixture();
 		const credentials = {
 			siteKey: 'site-key-kept-intact', secretKey: 'turnstile-secret-kept-intact',
-			s3AccessKey: 's3-access-key-kept-intact', s3SecretKey: 's3-secret-key-kept-intact',
 			tgBotToken: 'telegram-bot-token-kept-intact', resendTokens: { 'example.com': 'legacy-provider-token-kept-intact' },
 		};
 		expect((await request('/setting/set', { token, method: 'PUT', data: credentials })).code).toBe(200);
@@ -70,23 +69,42 @@ describe('server API with SQLite and local storage', () => {
 		Object.assign(form, {
 			title: 'Self-hosted mailbox', emailPrefixFilter: ['admin', 'postmaster'], aiCodeFilter: ['sender@example.com'],
 			mailProvider: 'untrusted-provider', mailHost: 'spoofed.example.com', aiAvailable: true,
-			domainList: ['@spoofed.example.com'], storageType: 'S3', hasR2: true, hasCfEmail: true, aiCode: 0,
+			domainList: ['@spoofed.example.com'], hasCfEmail: true, aiCode: 0,
 		});
 		const saved = await request('/setting/set', { token, method: 'PUT', data: form });
 		expect(saved.code, saved.message).toBe(200);
 		const updated = await request('/setting/query', { token });
 		expect(updated.code, updated.message).toBe(200);
+		for (const field of ['regKey', 'r2Domain', 'bucket', 'region', 'endpoint', 's3AccessKey', 's3SecretKey', 'forcePathStyle', 'storageType', 'hasR2']) {
+			expect(updated.data).not.toHaveProperty(field);
+		}
 		expect(updated.data).toMatchObject({
 			title: 'Self-hosted mailbox', emailPrefixFilter: ['admin', 'postmaster'], aiCodeFilter: 'sender@example.com',
 			mailProvider: 'postfix', mailHost: env.server.hostname, aiAvailable: false,
-			domainList: ['@example.com'], storageType: 'LOCAL', hasR2: false, hasCfEmail: false, aiCode: 1,
+			domainList: ['@example.com'], hasCfEmail: false, aiCode: 1,
 		});
-		const stored = env.db.prepare('SELECT site_key, secret_key, s3_access_key, s3_secret_key, tg_bot_token, resend_tokens FROM setting').get();
+		const stored = env.db.prepare('SELECT site_key, secret_key, tg_bot_token, resend_tokens FROM setting').get();
 		expect(stored).toEqual({
 			site_key: credentials.siteKey, secret_key: credentials.secretKey,
-			s3_access_key: credentials.s3AccessKey, s3_secret_key: credentials.s3SecretKey,
 			tg_bot_token: credentials.tgBotToken, resend_tokens: JSON.stringify(credentials.resendTokens),
 		});
+	});
+
+	it('uploads, serves and deletes a background using local storage without storage configuration', async () => {
+		const { env, app, request, token } = await fixture();
+		const saved = await request('/setting/setBackground', {
+			token, method: 'PUT', data: { background: 'data:image/png;base64,aGVsbG8=' },
+		});
+		expect(saved.code, saved.message).toBe(200);
+		expect(saved.data).toMatch(/^static\/background\//);
+		for (const path of [`/${saved.data}`, `/oss/${saved.data}`, `/api/oss/${saved.data}`]) {
+			const response = await app.request(`https://mail.example.com${path}`, {}, env);
+			expect(response.status).toBe(200);
+			expect(response.headers.get('content-type')).toBe('image/png');
+			expect(await response.text()).toBe('hello');
+		}
+		expect((await request('/setting/deleteBackground', { token, method: 'DELETE' })).code).toBe(200);
+		expect((await app.request(`https://mail.example.com/${saved.data}`, {}, env)).status).toBe(404);
 	});
 
 	it('creates an alias and searches, marks, stars and deletes the owner’s mail', async () => {
@@ -159,18 +177,15 @@ describe('server API with SQLite and local storage', () => {
 		expect(env.db.prepare('SELECT user_id FROM user WHERE email = ?').get('should-rollback@example.com')).toBeUndefined();
 	});
 
-	it('enforces invitation availability during registration and restores uses on database failure', async () => {
+	it('registers with the default role and enforces its domain permissions', async () => {
 		const { env, request, token, login } = await fixture();
-		expect((await request('/setting/set', { token, method: 'PUT', data: { regKey: 0 } })).code).toBe(200);
-		expect((await request('/regKey/add', { token, method: 'POST', data: { code: 'ONE-USE', roleId: 1, count: 1, expireTime: '2030-12-31 23:59:59' } })).code).toBe(200);
-		const registered = await request('/register', { method: 'POST', data: { email: 'invited@example.com', password: 'invite-password', code: 'ONE-USE' } });
+		const registered = await request('/register', { method: 'POST', data: { email: 'new-user@example.com', password: 'register-password' } });
 		expect(registered.code, registered.message).toBe(200);
-		expect(await login('invited@example.com', 'invite-password')).toBeTypeOf('string');
-		expect(env.db.prepare('SELECT count FROM reg_key WHERE code = ?').get('ONE-USE').count).toBe(0);
-		expect((await request('/register', { method: 'POST', data: { email: 'second@example.com', password: 'invite-password', code: 'ONE-USE' } })).code).not.toBe(200);
-		env.db.prepare('UPDATE reg_key SET count = 1 WHERE code = ?').run('ONE-USE');
-		env.db.prepare('INSERT INTO user (email, password, salt) VALUES (?, ?, ?)').run('orphan@example.com', 'fixture', 'fixture');
-		expect((await request('/register', { method: 'POST', data: { email: 'orphan@example.com', password: 'invite-password', code: 'ONE-USE' } })).code).not.toBe(200);
-		expect(env.db.prepare('SELECT count FROM reg_key WHERE code = ?').get('ONE-USE').count).toBe(1);
+		expect(await login('new-user@example.com', 'register-password')).toBeTypeOf('string');
+		expect(env.db.prepare('SELECT type FROM user WHERE email = ?').get('new-user@example.com').type).toBe(1);
+		env.db.prepare('UPDATE role SET avail_domain = ? WHERE is_default = 1').run('restricted.example.com');
+		expect((await request('/register', { method: 'POST', data: { email: 'blocked@example.com', password: 'register-password' } })).code).toBe(403);
+		expect(env.db.prepare('SELECT user_id FROM user WHERE email = ?').get('blocked@example.com')).toBeUndefined();
+		expect((await request('/role/tree', { token })).data.map(item => item.permId)).not.toContain(33);
 	});
 });

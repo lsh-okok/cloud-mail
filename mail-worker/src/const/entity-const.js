@@ -73,11 +73,6 @@ export const settingConst = {
 		OPEN: 0,
 		CLOSE: 1,
 	},
-	regKey: {
-		OPEN: 0,
-		CLOSE: 1,
-		OPTIONAL: 2,
-	},
 	receive: {
 		OPEN: 0,
 		CLOSE: 1,
@@ -123,14 +118,6 @@ export const settingConst = {
 	noRecipient: {
 		OPEN: 0,
 		CLOSE: 1,
-	},
-	kvStorage: {
-		OPEN: 0,
-		CLOSE: 1
-	},
-	forcePathStyle: {
-		OPEN: 0,
-		CLOSE: 1
 	},
 	aiCode: {
 		OPEN: 0,

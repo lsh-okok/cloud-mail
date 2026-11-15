@@ -174,9 +174,7 @@ import {useEmailStore} from "@/store/email.js";
 import {fileToBase64, formatBytes} from "@/utils/file-utils.js";
 import {getIconByName} from "@/utils/icon-utils.js";
 import sendPercent from "@/components/send-percent/index.vue"
-import {toOssDomain} from "@/utils/convert.js";
 import {formatDetailDate} from "@/utils/day.js";
-import {useSettingStore} from "@/store/setting.js";
 import {userDraftStore} from "@/store/draft.js";
 import {useWriterStore} from "@/store/writer.js";
 import db from "@/db/db.js";
@@ -195,7 +193,6 @@ defineExpose({
 const {t} = useI18n()
 const writerStore = useWriterStore();
 const draftStore = userDraftStore()
-const settingStore = useSettingStore()
 const emailStore = useEmailStore();
 const accountStore = useAccountStore()
 const editor = ref({})
@@ -676,8 +673,7 @@ function openReply(email) {
 
 function formatImage(content) {
   content = content || '';
-  const domain = settingStore.settings.r2Domain;
-  return content.replace(/{{domain}}/g, toOssDomain(domain) + '/');
+  return content.replace(/{{domain}}/g, import.meta.env.BASE_URL);
 }
 
 function open() {

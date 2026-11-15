@@ -19,7 +19,6 @@ import starService from './star-service';
 import dayjs from 'dayjs';
 import kvConst from '../const/kv-const';
 import { t } from '../i18n/i18n'
-import domainUtils from '../utils/domain-uitls';
 import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
@@ -389,8 +388,8 @@ const emailService = {
 			.run();
 	},
 
-	receive(c, params, cidAttList, r2domain) {
-		params.content = this.imgReplace(params.content, cidAttList, r2domain)
+	receive(c, params, cidAttList) {
+		params.content = this.imgReplace(params.content, cidAttList)
 		return orm(c).insert(email).values({ ...params }).returning().get();
 	},
 
@@ -444,7 +443,7 @@ const emailService = {
 		ccEmail.forEach(address => takenAddress.add(address.toLowerCase()));
 		bccEmail = bccEmail.filter(address => !takenAddress.has(address.toLowerCase()));
 
-		const { resendTokens, r2Domain, send } = await settingService.query(c);
+		const { resendTokens, send } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content || '');
 
@@ -582,7 +581,7 @@ const emailService = {
 				sendEmail: accountRow.email,
 				ccEmail, bccEmail,
 				messageId: emailRow.messageId,
-				sendType, roleRow, r2Domain,
+				sendType, roleRow,
 				imageDataList, attachments
 			}
 		};
@@ -698,14 +697,14 @@ const emailService = {
 			accountId, userId, name, subject, text, html, sendEmail, receiveEmail,
 			ccEmail = [], bccEmail = [],
 			providerId, messageId, sendType,
-			roleRow, r2Domain, attachments
+			roleRow, attachments
 		} = params;
 		const imageDataList = params.imageDataList.map(item => ({
 			...item, contentId: `<${item.contentId.replace(/^<|>$/g, '')}>`
 		}));
 		const emailData = {
 			sendEmail, name, subject, text, accountId, userId,
-			content: this.imgReplace(html, imageDataList, r2Domain),
+			content: this.imgReplace(html, imageDataList),
 			status: emailConst.status.SENT,
 			type: emailConst.type.SEND,
 			resendEmailId: providerId,
@@ -1094,7 +1093,7 @@ const emailService = {
 
 	},
 
-	imgReplace(content, cidAttList, r2domain) {
+	imgReplace(content, cidAttList) {
 
 		if (!content) {
 			return ''
@@ -1120,12 +1119,6 @@ const emailService = {
 					useAtts.push(cidAtt)
 				}
 
-			}
-
-			r2domain = domainUtils.toOssDomain(r2domain)
-
-			if (src && src.startsWith(r2domain + '/')) {
-				img.setAttribute('src', src.replace(r2domain + '/', '{{domain}}'));
 			}
 
 		}

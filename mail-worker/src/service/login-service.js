@@ -14,9 +14,7 @@ import saltHashUtils from '../utils/crypto-utils';
 import cryptoUtils from '../utils/crypto-utils';
 import turnstileService from './turnstile-service';
 import roleService from './role-service';
-import regKeyService from './reg-key-service';
 import dayjs from 'dayjs';
-import { toUtc } from '../utils/date-uitil';
 import { t } from '../i18n/i18n.js';
 import verifyRecordService from './verify-record-service';
 import { activeDomains } from '../modules/domains/service.js';
@@ -25,9 +23,9 @@ const loginService = {
 
 	async register(c, params, oauth = false) {
 
-		const { email, password, token, code } = params;
+		const { email, password, token } = params;
 
-		let { regKey, register, registerVerify, regVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c)
+		let { register, registerVerify, regVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c)
 
 		if (oauth) {
 			registerVerify = settingConst.registerVerify.CLOSE;
@@ -66,21 +64,6 @@ const loginService = {
 			throw new BizError(t('notEmailDomain'));
 		}
 
-		let type = null;
-		let regKeyId = 0
-
-		if (regKey === settingConst.regKey.OPEN) {
-			const result = await this.handleOpenRegKey(c, regKey, code)
-			type = result?.type
-			regKeyId = result?.regKeyId
-		}
-
-		if (regKey === settingConst.regKey.OPTIONAL) {
-			const result = await this.handleOpenOptional(c, regKey, code)
-			type = result?.type
-			regKeyId = result?.regKeyId
-		}
-
 		const accountRow = await accountService.selectByEmailIncludeDel(c, email);
 
 		if (accountRow && accountRow.isDel === isDel.DELETE) {
@@ -91,26 +74,9 @@ const loginService = {
 			throw new BizError(t('isRegAccount'));
 		}
 
-		let defType = null
-
-		if (!type) {
-			const roleRow = await roleService.selectDefaultRole(c);
-			defType = roleRow.roleId
-		}
-
-
-		const roleRow = await roleService.selectById(c, type || defType);
-
-		if(!roleService.hasAvailDomainPerm(roleRow.availDomain, email)) {
-
-			if (type) {
-				throw new BizError(t('noDomainPermRegKey'),403)
-			}
-
-			if (defType) {
-				throw new BizError(t('noDomainPermReg'),403)
-			}
-
+		const roleRow = await roleService.selectDefaultRole(c);
+		if (!roleService.hasAvailDomainPerm(roleRow.availDomain, email)) {
+			throw new BizError(t('noDomainPermReg'), 403)
 		}
 
 		let regVerifyOpen = false
@@ -129,33 +95,8 @@ const loginService = {
 
 		const { salt, hash } = await saltHashUtils.hashPassword(password);
 
-		let consumedCode = null
-		const usingRegKey = regKey !== settingConst.regKey.CLOSE && type
-
-		if (usingRegKey && !await regKeyService.consumeCount(c, code)) {
-			if (regKey === settingConst.regKey.OPEN) {
-				throw new BizError(t('noRegKeyCount'))
-			}
-			type = null
-			regKeyId = 0
-			defType = await this.useDefaultRole(c, email)
-		}
-
-		if (usingRegKey && type) {
-			consumedCode = code
-		}
-
-		let userId
-
-		try {
-			userId = await userService.insert(c, { email, regKeyId, password: hash, salt, type: type || defType });
-			await accountService.insert(c, { userId: userId, email, name: emailUtils.getName(email) });
-		} catch (error) {
-			if (consumedCode) {
-				await regKeyService.restoreCount(c, consumedCode)
-			}
-			throw error
-		}
+		const userId = await userService.insert(c, { email, password: hash, salt, type: roleRow.roleId });
+		await accountService.insert(c, { userId, email, name: emailUtils.getName(email) });
 
 		await userService.updateUserInfo(c, userId, true);
 
@@ -166,60 +107,6 @@ const loginService = {
 
 		return {regVerifyOpen}
 
-	},
-
-	async registerVerify() {
-
-	},
-
-	async handleOpenRegKey(c, regKey, code) {
-
-		if (!code) {
-			throw new BizError(t('emptyRegKey'));
-		}
-
-		const regKeyRow = await regKeyService.selectByCode(c, code);
-
-		if (!regKeyRow) {
-			throw new BizError(t('notExistRegKey'));
-		}
-
-		if (regKeyRow.count <= 0) {
-			throw new BizError(t('noRegKeyCount'));
-		}
-
-		if (!toUtc(regKeyRow.expireTime).isAfter(toUtc())) {
-			throw new BizError(t('regKeyExpire'));
-		}
-
-		return { type: regKeyRow.roleId, regKeyId: regKeyRow.regKeyId };
-	},
-
-	async useDefaultRole(c, email) {
-		const defaultRole = await roleService.selectDefaultRole(c)
-		if (!roleService.hasAvailDomainPerm(defaultRole.availDomain, email)) {
-			throw new BizError(t('noDomainPermReg'), 403)
-		}
-		return defaultRole.roleId
-	},
-
-	async handleOpenOptional(c, regKey, code) {
-
-		if (!code) {
-			return null
-		}
-
-		const regKeyRow = await regKeyService.selectByCode(c, code);
-
-		if (!regKeyRow) {
-			return null
-		}
-
-		if (regKeyRow.count <= 0 || !toUtc(regKeyRow.expireTime).isAfter(toUtc())) {
-			return null
-		}
-
-		return { type: regKeyRow.roleId, regKeyId: regKeyRow.regKeyId };
 	},
 
 	async login(c, params, noVerifyPwd = false) {
