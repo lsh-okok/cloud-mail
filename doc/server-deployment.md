@@ -48,7 +48,15 @@ curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/clou
 
 脚本读取现有安装记录和应用的 `MAIL_HOST`、`MAIL_DOMAINS`，从 NPM 容器的 `/etc/letsencrypt` 挂载自动选择覆盖邮件主机名的有效证书。从 GHCR 拉取经过测试的 `ghcr.io/lsh-okok/cloud-mail:mta-main` 邮件网关镜像，按摘要运行；服务器无需编译。它为现有应用追加独立邮件网络，通过内部 LMTP、策略和域名查询接口投递收信，无需重建管理容器。只发布 IPv4 TCP 25，587、2525、10040、10041 不发布到宿主机。邮件队列、DKIM 和日志使用独立持久卷，证书只读挂载；重复执行保留这些数据。
 
-默认应用目录为 `/opt/cloud-mail-primary`。自定义位置可加 `--dir`；NPM 容器不是 `npm` 时修改 `--npm-container`。也可用 `--cert-root /实际/letsencrypt目录 --cert-name npm-1` 指定证书。脚本会拒绝接管不属于当前安装的网络、容器和卷。完成后输出 DKIM 公钥记录；从外部邮箱给现有账号发送测试邮件，在收件箱确认入库。该入口用于给独立主节点增加公网收信；需要完整发信投递状态追踪时，继续使用下方完整 Compose 部署，让应用只读挂载邮件日志。
+默认应用目录为 `/opt/cloud-mail-primary`。自定义位置可加 `--dir`；NPM 容器不是 `npm` 时修改 `--npm-container`。也可用 `--cert-root /实际/letsencrypt目录 --cert-name npm-1` 指定证书。脚本会拒绝接管不属于当前安装的网络、容器和卷。完成后按域名输出 Cloudflare TXT 的名称及完整单行内容，自动合并公钥片段并移除 DNS 文件中的引号、括号和注释，可直接粘贴；从外部邮箱给现有账号发送测试邮件，在收件箱确认入库。该入口用于给独立主节点增加公网收信；需要完整发信投递状态追踪时，继续使用下方完整 Compose 部署，让应用只读挂载邮件日志。
+
+已启用收信时，用以下命令重新查看可直接粘贴的 DKIM 记录。此模式只读取公钥，无需查找 NPM 证书，不拉取镜像或重启服务，也不会更换密钥：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/enable-mail.sh -o /tmp/enable-mail.sh && bash /tmp/enable-mail.sh --show-dkim
+```
+
+例如邮箱域为 `example.com`，在 Cloudflare 的 `example.com` DNS 中添加类型 `TXT`、名称 `mail._domainkey`，将脚本“内容”下方整行粘贴到内容框。多域名逐个添加；自定义安装目录继续带上 `--dir`。
 
 ## 1. 准备服务器与域名
 

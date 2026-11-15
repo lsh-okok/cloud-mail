@@ -10,6 +10,8 @@ const instance = 'ab'.repeat(16);
 const digest = `sha256:${'cd'.repeat(32)}`;
 const image = `ghcr.io/lsh-okok/cloud-mail@${digest}`;
 const revision = 'ef'.repeat(20);
+const publicKey = `MIIB${'Ab0+/'.repeat(65)}AQAB`;
+const txtContent = `v=DKIM1; h=sha256; k=rsa; p=${publicKey}`;
 const shell = process.platform === 'win32' ? 'bash.exe' : '/bin/bash';
 const source = fileURLToPath(new URL('../../docker/enable-mail.sh', import.meta.url));
 
@@ -19,6 +21,14 @@ function fixture() {
   writeFileSync(join(root, 'enable-mail.sh'), readFileSync(source, 'utf8'));
   writeFileSync(join(root, 'certs/live/npm-1/fullchain.pem'), 'fixture public certificate');
   writeFileSync(join(root, 'certs/live/npm-1/privkey.pem'), 'fixture private key');
+  writeFileSync(join(root, 'mail-domains'), 'example.com');
+  writeFileSync(join(root, 'dkim-record'), `mail._domainkey IN TXT (
+  "v=DKIM1; h=sha256; k=rsa; "
+  "p=${publicKey.slice(0, 120)}"
+  "${publicKey.slice(120)}"
+) ; DKIM comment with "quoted text" that is not part of the key
+; "another comment"
+`);
   const mock = (name, code) => writeFileSync(join(root, 'bin', name), `#!/bin/sh\nset -eu\n${code}`, { mode: 0o755 });
   mock('id', "printf '0\\n'");
   mock('uname', 'case "${1:-}" in -m) printf x86_64 ;; *) printf Linux ;; esac');
@@ -38,7 +48,10 @@ case "$1" in
       npm) printf '%s/certs' "$MAIL_ENABLE_TEST_ROOT" ;;
       test-primary-mail)
         [ -f "$MAIL_ENABLE_TEST_ROOT/gateway-present" ] || exit 1
-        case "\${4:-}" in *installation-id*) printf '${instance}' ;; *cloud-mail.role*) printf mta ;; *PortBindings*) printf 25 ;; esac ;;
+        case "\${4:-}" in
+          *installation-id*) if [ -f "$MAIL_ENABLE_TEST_ROOT/foreign-gateway" ]; then printf other; else printf '${instance}'; fi ;;
+          *cloud-mail.role*) printf mta ;; *PortBindings*) printf 25 ;;
+        esac ;;
       test-primary)
         case "$4" in
           *Mounts*) if [ -f "$MAIL_ENABLE_TEST_ROOT/wrong-app-mount" ]; then printf bind:/other; else printf volume:test-primary-data; fi ;;
@@ -85,8 +98,8 @@ case "$1" in
     esac ;;
   exec)
     if [ "$2" = test-primary ]; then
-      case "$6" in NODE_ROLE) printf primary ;; MAIL_HOST) printf mx.example.com ;; MAIL_DOMAINS) printf example.com ;; MAIL_NETWORK_SUBNET) printf 172.30.89.0/24 ;; *) exit 98 ;; esac
-    elif [ "$3" = cat ]; then printf 'mail._domainkey IN TXT "v=DKIM1; k=rsa; p=fixture"';
+      case "$6" in NODE_ROLE) printf primary ;; MAIL_HOST) printf mx.example.com ;; MAIL_DOMAINS) cat "$MAIL_ENABLE_TEST_ROOT/mail-domains" ;; MAIL_NETWORK_SUBNET) printf 172.30.89.0/24 ;; *) exit 98 ;; esac
+    elif [ "$3" = cat ]; then cat "$MAIL_ENABLE_TEST_ROOT/dkim-record";
     else [ ! -f "$MAIL_ENABLE_TEST_ROOT/not-ready" ]; fi ;;
   run) touch "$MAIL_ENABLE_TEST_ROOT/gateway-present" ;;
   stop|rm) [ "\${3:-}" = 60 ] || [ "$2" = test-primary-mail ] || exit 98 ;;
@@ -117,8 +130,71 @@ describe('mail gateway for standalone primary', () => {
     expect(f.log()).toContain('target=/certs,readonly');
     expect(f.log()).not.toMatch(/-p (?:587|2525|10040|10041)|^stop |^rm |volume rm|network prune|build /m);
     expect(result.stdout).toContain('公网收信服务已启动');
-    expect(result.stdout).toContain('v=DKIM1;');
+    expect(result.stdout).toContain(`名称：mail._domainkey\n完整名称：mail._domainkey.example.com\n内容：\n${txtContent}\n`);
+    expect(result.stdout).not.toMatch(/IN TXT|quoted text|another comment/);
     expect(result.stdout).not.toContain('fixture private key');
+  });
+
+  it('shows complete single-line Cloudflare values without certificate lookup, image pulls or service changes', () => {
+    const f = fixture();
+    for (const marker of ['gateway-present', 'bad-cert', 'pull-failed', 'port-busy']) f.mark(marker);
+    const result = f.execute(['--show-dkim']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`内容：\n${txtContent}\n`);
+    expect(result.stdout).not.toMatch(/公网收信服务已启动|["()]/);
+    expect(f.log().trim().split('\n').every(line => /^(?:info|container inspect|volume inspect|exec)\b/.test(line))).toBe(true);
+    expect(f.log()).not.toMatch(/\bnpm\b|MAIL_HOST|MAIL_NETWORK_SUBNET|mail-healthcheck|\.private/);
+  });
+
+  it('prints a separate ready-to-paste record for each domain', () => {
+    const f = fixture(); f.mark('gateway-present');
+    writeFileSync(join(f.root, 'mail-domains'), 'example.com,example.net');
+    const result = f.execute(['--show-dkim']);
+    expect(result.status, result.stderr).toBe(0);
+    for (const domain of ['example.com', 'example.net']) {
+      expect(result.stdout).toContain(`域名：${domain}\n类型：TXT\n名称：mail._domainkey\n完整名称：mail._domainkey.${domain}\n内容：\n${txtContent}\n`);
+      expect(f.log()).toContain(`cat /etc/opendkim/keys/${domain}/mail.txt`);
+    }
+  });
+
+  it('also accepts the single-fragment TXT form', () => {
+    const f = fixture(); f.mark('gateway-present');
+    writeFileSync(join(f.root, 'dkim-record'), `mail._domainkey IN TXT "${txtContent}"\r\n`);
+    const result = f.execute(['--show-dkim']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`内容：\n${txtContent}\n`);
+  });
+
+  it.each([
+    'mail._domainkey IN TXT ( "v=DKIM1; k=rsa; " )',
+    'mail._domainkey IN TXT "v=DKIM1; k=rsa; p=broken key"',
+    'mail._domainkey IN TXT "v=DKIM1; k=rsa; p=unterminated',
+  ])('rejects malformed TXT records instead of displaying an incomplete key: %s', record => {
+    const f = fixture(); f.mark('gateway-present');
+    writeFileSync(join(f.root, 'dkim-record'), record);
+    const result = f.execute(['--show-dkim']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('DKIM 公钥格式无效');
+    expect(result.stdout).not.toContain('内容：');
+  });
+
+  it('reports missing public records without restarting services', () => {
+    const f = fixture(); f.mark('gateway-present');
+    rmSync(join(f.root, 'dkim-record'));
+    const result = f.execute(['--show-dkim']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('无法读取 example.com 的 DKIM 公钥');
+    expect(f.log()).not.toMatch(/^(?:pull|run|stop|rm|network|volume create) /m);
+  });
+
+  it.each(['absent', 'foreign'])('does not read keys from a missing or foreign gateway: %s', gateway => {
+    const f = fixture();
+    if (gateway === 'foreign') { f.mark('gateway-present'); f.mark('foreign-gateway'); }
+    const result = f.execute(['--show-dkim']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(gateway === 'absent' ? '尚未找到本实例的邮件容器' : '同名邮件容器属于其他安装');
+    expect(f.log()).not.toContain('cat /etc/opendkim/keys/');
+    expect(f.log()).not.toMatch(/^(?:pull|run|stop|rm|network|volume create) /m);
   });
 
   it('repeats without restarting the application or deleting queue and DKIM volumes', () => {

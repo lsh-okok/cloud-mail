@@ -8,6 +8,7 @@ mail_name=''
 mail_npm=npm
 mail_cert_root=''
 mail_cert_name=''
+mail_show_dkim=false
 mail_original_args=("$@")
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,10 +19,12 @@ while [[ $# -gt 0 ]]; do
         --cert-root) mail_cert_root=$2 ;; --cert-name) mail_cert_name=$2 ;;
       esac
       shift 2 ;;
+    --show-dkim) mail_show_dkim=true; shift ;;
     --help|-h)
       printf '%s\n' '用法：sudo bash enable-mail.sh [--dir /opt/cloud-mail-primary] [--name 容器名] [--npm-container npm] [--cert-root NPM证书根目录] [--cert-name npm-1]' \
         '为已安装的独立管理主节点启用公网25端口收信，保留现有应用、账号及邮件。' \
-        '默认自动选择 NPM 中覆盖 MAIL_HOST 的有效证书；从 GHCR 拉取经过测试的邮件镜像。'
+        '默认自动选择 NPM 中覆盖 MAIL_HOST 的有效证书；从 GHCR 拉取经过测试的邮件镜像。' \
+        '仅查看可直接粘贴到 Cloudflare 的 DKIM 名称和内容：bash enable-mail.sh --show-dkim [--dir 安装目录]'
       exit 0 ;;
     *) fail "未知参数：$1" ;;
   esac
@@ -29,7 +32,9 @@ done
 [[ $(uname -s) == Linux ]] || fail '邮件启动脚本适用于 Linux 服务器。'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail '官方镜像仅支持 Linux amd64。' ;; esac
 if [[ $(id -u) != 0 ]]; then exec sudo bash "$0" "${mail_original_args[@]}"; fi
-for mail_tool in docker openssl ss awk sha256sum; do command -v "$mail_tool" >/dev/null || fail "缺少工具：$mail_tool"; done
+mail_tools=(docker awk sed)
+if [[ $mail_show_dkim == false ]]; then mail_tools+=(openssl ss sha256sum); fi
+for mail_tool in "${mail_tools[@]}"; do command -v "$mail_tool" >/dev/null || fail "缺少工具：$mail_tool"; done
 docker info >/dev/null 2>&1 || fail '无法连接 Docker 服务。'
 [[ $mail_dir == /* && -d $mail_dir && ! -L $mail_dir ]] || fail '请指定已有主节点的安装目录。'
 mail_dir=$(cd "$mail_dir" && pwd -P)
@@ -52,12 +57,68 @@ mail_app_mount=$(docker container inspect --format '{{range .Mounts}}{{if eq .De
 [[ $(docker container inspect --format '{{.State.Running}}' "$mail_app") == true ]] || fail '请先启动管理主节点。'
 app_setting() { docker exec "$mail_app" node -p 'process.env[process.argv[1]] || ""' "$1"; }
 [[ $(app_setting NODE_ROLE) == primary ]] || fail '只能为管理主节点启用收信。'
-mail_host=$(app_setting MAIL_HOST)
 mail_domains=$(app_setting MAIL_DOMAINS)
+[[ $mail_domains =~ ^[a-zA-Z0-9][a-zA-Z0-9.,-]*$ ]] || fail '应用 MAIL_DOMAINS 无效。'
+mail_gateway="$mail_app-mail"
+mail_existing=false
+if docker container inspect "$mail_gateway" >/dev/null 2>&1; then
+  [[ $(docker container inspect --format '{{index .Config.Labels "cloud-mail.installation-id"}}' "$mail_gateway") == "$mail_instance" ]] || fail '同名邮件容器属于其他安装。'
+  [[ $(docker container inspect --format '{{index .Config.Labels "cloud-mail.role"}}' "$mail_gateway") == mta ]] || fail '同名容器不是本实例的邮件服务。'
+  mail_existing=true
+fi
+
+show_dkim() {
+  local mail_domain mail_raw mail_txt
+  local -a mail_domain_list
+  printf '%s\n' 'Cloudflare DNS：每个域名添加一条 TXT 记录，将“内容”下方整行直接粘贴到内容框。'
+  IFS=, read -r -a mail_domain_list <<< "$mail_domains"
+  for mail_domain in "${mail_domain_list[@]}"; do
+    mail_raw=$(docker exec "$mail_gateway" cat "/etc/opendkim/keys/$mail_domain/mail.txt") || fail "无法读取 $mail_domain 的 DKIM 公钥，请确认邮件容器已启动且密钥已生成。"
+    # OpenDKIM wraps long TXT values in quoted fragments; semicolons inside
+    # quotes are DKIM tags, while semicolons outside quotes start zone comments.
+    mail_txt=$(LC_ALL=C awk '
+      {
+        sub(/\r$/, "")
+        for (i=1; i<=length($0); i++) {
+          c=substr($0,i,1)
+          if (quoted) {
+            if (c=="\"") quoted=0
+            else if (c=="\\") invalid=1
+            else value=value c
+          } else if (c==";") break
+          else if (c=="\"") quoted=1
+        }
+        if (quoted) invalid=1
+      }
+      END {
+        sub(/^[ \t]+/, "", value); sub(/[ \t]+$/, "", value)
+        if (invalid || value !~ /^v=DKIM1;/ || value ~ /[^ -~]/) exit 1
+        n=split(value,tags,";")
+        for (i=1; i<=n; i++) {
+          sub(/^[ \t]+/, "", tags[i]); sub(/[ \t]+$/, "", tags[i])
+          if (tags[i] ~ /^p=/) {
+            key=substr(tags[i],3); keys++
+            if (key !~ /^[A-Za-z0-9+\/]+=?=?$/) exit 1
+          }
+        }
+        if (keys!=1) exit 1
+        print value
+      }
+    ' <<< "$mail_raw") || fail "$mail_domain 的 DKIM 公钥格式无效，未输出不完整的 DNS 内容。"
+    printf '\n域名：%s\n类型：TXT\n名称：mail._domainkey\n完整名称：mail._domainkey.%s\n内容：\n%s\n' "$mail_domain" "$mail_domain" "$mail_txt"
+  done
+}
+
+if [[ $mail_show_dkim == true ]]; then
+  [[ $mail_existing == true ]] || fail '尚未找到本实例的邮件容器，请先启用公网收信。'
+  show_dkim
+  exit 0
+fi
+
+mail_host=$(app_setting MAIL_HOST)
 mail_subnet=$(app_setting MAIL_NETWORK_SUBNET)
 mail_subnet=${mail_subnet:-172.30.89.0/24}
 [[ $mail_host =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z0-9.-]+$ ]] || fail '应用 MAIL_HOST 无效。'
-[[ $mail_domains =~ ^[a-zA-Z0-9][a-zA-Z0-9.,-]*$ ]] || fail '应用 MAIL_DOMAINS 无效。'
 [[ $mail_subnet =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$ ]] || fail 'MAIL_NETWORK_SUBNET 必须是 IPv4 网段。'
 
 if [[ -z $mail_cert_root ]]; then
@@ -82,15 +143,8 @@ for mail_candidate in "${mail_candidates[@]}"; do
 done
 [[ -n $mail_cert ]] || fail "请先在 NPM 为 $mail_host 申请有效的 Let's Encrypt 证书，再执行本命令。"
 mail_cert_relative=${mail_cert#"$mail_cert_root/"}
-mail_gateway="$mail_app-mail"
 mail_network="$mail_app-mail-network"
 mail_volumes=("$mail_app-mail-spool" "$mail_app-dkim" "$mail_app-mail-logs")
-mail_existing=false
-if docker container inspect "$mail_gateway" >/dev/null 2>&1; then
-  [[ $(docker container inspect --format '{{index .Config.Labels "cloud-mail.installation-id"}}' "$mail_gateway") == "$mail_instance" ]] || fail '同名邮件容器属于其他安装。'
-  [[ $(docker container inspect --format '{{index .Config.Labels "cloud-mail.role"}}' "$mail_gateway") == mta ]] || fail '同名容器不是本实例的邮件服务。'
-  mail_existing=true
-fi
 if [[ -n $(ss -H -ltn 'sport = :25') ]]; then
   [[ $mail_existing == true ]] || fail '25端口已被其他服务占用，已停止。'
   mail_ports=$(docker container inspect --format '{{range (index .HostConfig.PortBindings "25/tcp")}}{{println .HostPort}}{{end}}' "$mail_gateway")
@@ -159,11 +213,8 @@ while (( $(date +%s) < mail_deadline )); do
   if docker exec "$mail_gateway" /usr/local/bin/mail-healthcheck >/dev/null 2>&1 && \
      docker exec "$mail_gateway" sh -c 'nc -z -w 2 app 2525 && nc -z -w 2 app 10040 && nc -z -w 2 app 10041' >/dev/null 2>&1; then
     printf '\n公网收信服务已启动\n邮件服务器：%s:25\n邮件容器：%s\nGitHub 提交：%s\n' "$mail_host" "$mail_gateway" "$mail_revision"
-    printf '%s\n' '现有管理容器和数据已保留。请从外部邮箱发送测试邮件，确认进入收件箱。' '以下为可发布到 Cloudflare DNS 的 DKIM 公钥：'
-    IFS=, read -r -a mail_domain_list <<< "$mail_domains"
-    for mail_domain in "${mail_domain_list[@]}"; do
-      docker exec "$mail_gateway" cat "/etc/opendkim/keys/$mail_domain/mail.txt"
-    done
+    printf '%s\n' '现有管理容器和数据已保留。请从外部邮箱发送测试邮件，确认进入收件箱。'
+    show_dkim
     exit 0
   fi
   sleep 5
