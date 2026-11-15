@@ -83,7 +83,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Promote current main and record digest
+      - name: Promote current main and latest and record digest
         env:
           IMAGE: ${{ steps.ref.outputs.image }}
           IMAGE_DIGEST: ${{ steps.ref.outputs.digest || steps.image.outputs.digest }}
@@ -91,10 +91,10 @@ jobs:
           set -eu
           main_sha=$(git ls-remote origin refs/heads/main | cut -f1)
           if [ "$main_sha" = "$GITHUB_SHA" ]; then
-            docker buildx imagetools create --tag "$IMAGE:main" "$IMAGE@$IMAGE_DIGEST"
-            echo "Published main: $IMAGE@$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+            docker buildx imagetools create --tag "$IMAGE:main" --tag "$IMAGE:latest" "$IMAGE@$IMAGE_DIGEST"
+            echo "Published main and latest: $IMAGE@$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Skipped main promotion: a newer main commit exists." >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped main and latest promotion: a newer main commit exists." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "Commit image: $IMAGE:sha-$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "Fixed image: $IMAGE@$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"

@@ -22,7 +22,7 @@ NPM 证书目录 ── 只读挂载 ── Postfix STARTTLS
 curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/install-primary.sh -o install-primary.sh && bash install-primary.sh
 ```
 
-GitHub Actions 在 `main` 通过后端测试、前后端构建、部署检查和 Docker 收发演练后，发布 `ghcr.io/lsh-okok/cloud-mail:main` 以及 `ghcr.io/lsh-okok/cloud-mail:sha-<完整40位提交号>`。当前发布平台为 `linux/amd64`。`main` 指向最新成功发布的版本，尚在构建或检查失败的提交不会替换它；镜像附带 GitHub 来源与提交记录。
+GitHub Actions 在 `main` 通过后端测试、前后端构建、部署检查和 Docker 收发演练后，发布 `ghcr.io/lsh-okok/cloud-mail:main`、`ghcr.io/lsh-okok/cloud-mail:latest` 以及 `ghcr.io/lsh-okok/cloud-mail:sha-<完整40位提交号>`。当前发布平台为 `linux/amd64`。`main` 和 `latest` 指向同一个最新成功发布的版本，尚在构建或检查失败的提交不会替换它们；镜像附带 GitHub 来源与提交记录。
 
 脚本自动安装 Docker 和必要工具，默认从 GHCR 拉取 `main` 镜像，解析并记录不可变的仓库摘要后按摘要启动；不在服务器编译。脚本生成独立管理员密码、JWT 与数据加密密钥，使用持久数据卷启动。默认目录 `/opt/cloud-mail-primary`、容器名 `cloud-mail-primary`、端口3000，完成后打印访问地址、管理员邮箱、初始密码、镜像摘要与 GitHub 提交。可用 `--host` 指定访问IP，`--port`、`--dir`、`--name` 指定独立实例，`--mail-domain` 和 `--admin-email` 修改邮箱域及管理员邮箱。`--image` 只接受官方仓库的 `main`、`sha-<完整提交号>` 或 `@sha256:<摘要>`，始终从 GHCR 拉取。
 
