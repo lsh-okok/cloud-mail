@@ -10,4 +10,8 @@ COPY maintenance.sh /usr/local/bin/mail-maintenance
 COPY supervisord.conf /etc/supervisor/conf.d/mail.conf
 RUN chmod 755 /usr/local/bin/mail-*
 EXPOSE 25 587
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.source="https://github.com/lsh-okok/cloud-mail" \
+    org.opencontainers.image.revision=$VCS_REF \
+    io.cloud-mail.component=mta
 ENTRYPOINT ["/usr/local/bin/mail-entrypoint"]

@@ -38,6 +38,18 @@ curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/clou
 
 `--reinstall` 会永久删除该实例的账号、邮箱、邮件和配置，不执行备份；生成新的管理员密码和密钥。脚本先验证安装记录、容器和数据卷的归属，拉取并校验新镜像后才停止旧容器、删除该实例的数据卷并安装。未指定的站点地址、邮箱域和端口沿用安装记录，可通过参数覆盖。手动更新时遗漏容器标签的官方镜像，只要仍挂载原有且身份匹配的数据卷，也可重装。其他容器、数据卷及安装目录中的其他文件保持原样。普通安装不带 `--reinstall`，继续保留已有数据。
 
+## 为独立管理主节点启用收信
+
+先在 NPM 为邮件主机名（例如 `mx.example.com`）申请有效的 Let's Encrypt 证书，然后执行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/enable-mail.sh -o /tmp/enable-mail.sh && bash /tmp/enable-mail.sh --npm-container npm
+```
+
+脚本读取现有安装记录和应用的 `MAIL_HOST`、`MAIL_DOMAINS`，从 NPM 容器的 `/etc/letsencrypt` 挂载自动选择覆盖邮件主机名的有效证书。从 GHCR 拉取经过测试的 `ghcr.io/lsh-okok/cloud-mail:mta-main` 邮件网关镜像，按摘要运行；服务器无需编译。它为现有应用追加独立邮件网络，通过内部 LMTP、策略和域名查询接口投递收信，无需重建管理容器。只发布 IPv4 TCP 25，587、2525、10040、10041 不发布到宿主机。邮件队列、DKIM 和日志使用独立持久卷，证书只读挂载；重复执行保留这些数据。
+
+默认应用目录为 `/opt/cloud-mail-primary`。自定义位置可加 `--dir`；NPM 容器不是 `npm` 时修改 `--npm-container`。也可用 `--cert-root /实际/letsencrypt目录 --cert-name npm-1` 指定证书。脚本会拒绝接管不属于当前安装的网络、容器和卷。完成后输出 DKIM 公钥记录；从外部邮箱给现有账号发送测试邮件，在收件箱确认入库。该入口用于给独立主节点增加公网收信；需要完整发信投递状态追踪时，继续使用下方完整 Compose 部署，让应用只读挂载邮件日志。
+
 ## 1. 准备服务器与域名
 
 需要 Docker Engine、Docker Compose v2、一个已运行的 NPM、固定公网 IPv4，以及域名 DNS 管理权限。服务器厂商必须允许**入站和出站 TCP 25**；Web 端口 80/443 继续由 NPM 使用。防火墙开放入站 25，不开放 3000、2525、10040、10041 或 587。当前 MTA 默认仅使用 IPv4。

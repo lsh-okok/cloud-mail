@@ -402,7 +402,7 @@ while (( $(date +%s) < primary_deadline )); do
     printf '镜像 ID：%s\n' "$primary_image_id"
     if [[ -n $primary_image_digest ]]; then printf '镜像摘要：%s\nGitHub 提交：%s\n' "$primary_image_digest" "$primary_image_revision"; fi
     printf '配置文件：%s\n容器名称：%s\n数据卷：%s\n' "$primary_env" "$primary_container" "$primary_volume"
-    printf '%s\n' '已提供主节点管理服务，可在「节点管理」新增并部署只读节点。' 'MX/Postfix 收发尚未启用；公网域名、HTTPS 和邮件服务需按服务器部署文档配置。'
+    printf '%s\n' '已提供主节点管理服务，可在「节点管理」新增并部署只读节点。' '此安装默认未启用 MX/Postfix；公网收信可使用 cloud-mail-primary/enable-mail.sh，步骤见服务器部署文档。'
     exit 0
   fi
   [[ $(docker container inspect --format '{{.State.Running}}' "$primary_container") == true ]] || fail "主节点容器已停止，请执行 docker logs $primary_container 排查；配置和数据已保留。"
