@@ -1,6 +1,6 @@
 # 192.168.31.111 局域网部署记录
 
-日期：2026-11-13。用户已选择使用 `cloudmail.test` 进行局域网验证。
+初次部署：2026-11-13；最近更新：2026-11-15。用户已选择使用 `cloudmail.test` 进行局域网验证。
 
 ## 访问与范围
 
@@ -14,7 +14,8 @@
 
 - 部署目录：`/home/enohaook/cloud-mail`。
 - Compose 项目：`cloud-mail`，配置为 `docker-compose.yml` 与 `compose.lan.yml`。
-- 当前镜像：`cloud-mail-app:latest-20261114-121352`、`cloud-mail-mta:lan-20261113-mx`。
+- 当前应用镜像：`ghcr.io/lsh-okok/cloud-mail@sha256:2eac39e03d6e5a58ff799aec7cbbb6f22a806522013a5471d394e11c5d6730c4`，GitHub 提交 `1f53e053bbc2a78de4432ca335fc534bcb298449`。
+- 当前邮件镜像：`cloud-mail-mta:lan-20261113-mx`；此次升级保留原邮件容器。
 - 持久卷：`cloud-mail_app_data`、`cloud-mail_mail_spool`、`cloud-mail_mail_logs`、`cloud-mail_dkim_keys`。
 - 独立网页网络：`cloud-mail-lan-web`；邮件内部网络：`cloud-mail_mail_internal`。
 - 源码包 SHA-256：`a3a0d4a6341d46dd21d77b5f3e9e97084fcef915cb34a5fa762dd63e717cf482`。对应当时工作区源码，包含 HTTP 环境的子邮箱链接复制回退。
@@ -101,8 +102,31 @@ SMTP 发件账号尚未配置，每日计划保持停用。实际收信验证的
 - 应用部署包 SHA-256：`f30824f2607d746548591055e8d7149bc818a9f9ea0aa6d714046265f0dfff18`，包含完整前后端产物、节点源码包及入口脚本。
 - 升级前配置与 SQLite/附件成对备份：`/home/enohaook/cloud-mail/backups/pre-latest-20261114-121352/`；回退镜像 `cloud-mail-app:rollback-latest-20261114-121352` 对应此前 `278ebbec…2789f7` 镜像。
 - 部署目录：`/home/enohaook/cloud-mail-latest-20261114-121352/`；本机证据在忽略目录 `data/deployment-latest-20261114/`。
-- 同版本节点预构建镜像包位于部署目录的 `node-publication/`，通过只读挂载 `/app/node-deployment` 及 `NODE_DEPLOYMENT_IMAGE_DIR` 交付。镜像包 SHA-256：`795324c93b64a941f61e4795ffac9c46d04c210bae53a7f53c45cf5f76b2c331`。已在构建验证及运行容器内用 UID 1000 读取并复算校验；发布目录所有者保持 `1000:1000`。后续维护须继续保留 LAN Compose 中此只读挂载与环境变量。
+- 同版本节点预构建镜像包位于部署目录的 `node-publication/`，通过只读挂载 `/app/node-deployment` 及 `NODE_DEPLOYMENT_IMAGE_DIR` 交付。镜像包 SHA-256：`795324c93b64a941f61e4795ffac9c46d04c210bae53a7f53c45cf5f76b2c331`。已在构建验证及运行容器内用 UID 1000 读取并复算校验；发布目录所有者保持 `1000:1000`。这是当时源码包/离线镜像方案的要求；2026-11-15 切换 GHCR 后已移除此挂载与环境变量，见后节。
 
 最终应用及邮件容器均 healthy，API 返回数据库正常、mail ready，主节点 ready。邮件容器 ID 未变，`.env` 未变，原有数据卷保留；用户1、邮箱2、主邮箱2、邮件0、子邮箱链接0、验证任务2、节点2，来源及链接内容摘要与升级前相同。线上 HTML 和主 JS 已与此次构建逐字节核对，邮件队列为空，磁盘剩余约3.5GB。
 
 浏览器确认新版本登录页可加载，原会话已失效，管理页面需要使用当前密码重新登录。运行环境保存的初始密码仍被现有用户记录拒绝（升级前记录也已存在此情况），未重置密码；因此没有声称本次已完成新的管理员登录或创建节点实测。节点安装包的实际可读性、版本与摘要已独立验证，安装接口行为由291项自动化回归覆盖。本次仅升级111，未调整112/113。
+
+## GitHub main 镜像部署（2026-11-15）
+
+已按用户选择改为 GitHub 构建镜像、服务器拉取部署。[GitHub Actions 运行 43683814197](https://github.com/lsh-okok/cloud-mail/actions/runs/43683814197) 成功，发布 `linux/amd64` 应用镜像。`.111` 使用空的 Docker 配置进行匿名拉取验证，再按仓库摘要升级应用，未把本地工作区产物打入运行镜像。
+
+- 应用代码提交：`1f53e053bbc2a78de4432ca335fc534bcb298449`。
+- GHCR 仓库摘要：`ghcr.io/lsh-okok/cloud-mail@sha256:2eac39e03d6e5a58ff799aec7cbbb6f22a806522013a5471d394e11c5d6730c4`。
+- 镜像 config ID：`sha256:a458fab6c5822cb55452131f25a2e687cbb946a93566dfb1712d21b2d673f2a7`。它与上面的仓库 manifest 摘要属于不同层级，核验时应区分。
+- 升级前配置与 SQLite/附件成对备份：`/home/enohaook/cloud-mail/backups/pre-ghcr-20261115/`。
+- 回退镜像：`cloud-mail-app:rollback-pre-ghcr-20261115`。
+- 部署暂存目录：`/home/enohaook/cloud-mail-registry-20261115/`；本机日志与验收材料位于忽略目录 `data/deployment-registry-20261115/`。
+
+LAN Compose 已改为使用上述 GHCR 应用摘要。旧 `NODE_DEPLOYMENT_IMAGE_DIR` 环境变量及只读 `node-publication` 挂载已移除；上节关于保留它们的要求仅属于 2026-11-14 的历史方案。新版节点一键命令从主节点获取接入配置，再由目标服务器直接拉取 GHCR 的最新已发布 `main`，不再下载主节点源码或离线镜像包。原卷、管理员密码、JWT/数据加密密钥及业务配置保留，未重置管理员密码。
+
+升级前检查发现，NetworkManager 此前执行 networking off/on 后接管了 Docker 网桥与 veth 接口，导致网页不可达。已先保存网络配置到 `/home/enohaook/cloud-mail/backups/network-pre-ghcr-20261115/`，再将现有 Docker 网桥 `br-4bf8adcad0af`、`br-f0a6e3bbad5f`、`docker0` 与 `veth*` 设为 unmanaged，恢复网桥地址与接口关联。恢复过程未重启应用或邮件服务。若重建 Docker 网络导致网桥名称改变，须同步更新此 NetworkManager 配置。
+
+修复后应用和邮件容器均 healthy，公开 `/api/health` 与容器 `/health/ready` 正常；从 Windows 外部访问健康接口返回 HTTP 200。邮件容器 ID 仍以 `439692` 开头，未被重建。线上网页资源与本次镜像产物逐字节匹配，邮件队列为空，磁盘剩余约3.4GB。
+
+升级前后均为用户1、邮箱账户2、主邮箱2、邮件0、子邮箱链接0、验证任务2、节点2，迁移仍为1～4。原业务环境配置、来源和链接内容摘要保持一致；仅移除了上述已淘汰的部署镜像目录设置。此检查不等同于重新登录管理员验收：原浏览器会话已过期，现有管理员密码保持不变，本次生产验证依据公开健康接口、容器状态、静态资源与数据核对。
+
+已在独立的13000/13001测试端口通过真实公共脚本验收：匿名拉取 GHCR、全新管理主节点安装、API登录和部署命令生成、副本首次同步与在线就绪均成功。主副本均固定上述镜像摘要和提交；重复执行两份安装脚本后，容器、镜像、配置、独立密钥及数据卷保持不变。正式应用与邮件容器身份全程未变；全部测试容器、卷和带密钥测试配置已清理。脱敏通过报告位于 `/home/enohaook/cloud-mail-registry-check-evidence/20261115T063735Z-1e591b21/report.json`，本机证据见忽略目录中的 `integration-final.log`。
+
+同机测试时，宿主机13000端口的 Docker 回流连接受既有防火墙规则限制；验收使用测试主容器的桥接地址供副本连接。副本到正式主节点 `192.168.31.111:3000` 的访问已另行确认正常。没有为此放宽防火墙；跨服务器部署仍应填写目标容器可访问的主节点局域网IP或域名。
