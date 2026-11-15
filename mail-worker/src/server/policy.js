@@ -1,6 +1,7 @@
 import net from 'node:net';
 import emailUtils from '../utils/email-utils.js';
 import { knownDomains } from '../modules/domains/service.js';
+import { isSuperAdmin } from '../modules/administrators/service.js';
 
 export class MailError extends Error {
   constructor(message, responseCode = 451) {
@@ -59,7 +60,7 @@ export function resolveRecipient(env, recipient, sender = '') {
   }
   const user = env.db.prepare('SELECT * FROM user WHERE user_id = ?').get(account.user_id);
   if (!user) throw new MailError('5.1.1 Recipient not found', 550);
-  if (user.email.toLowerCase() !== String(env.admin).toLowerCase()) {
+  if (!isSuperAdmin(env, user)) {
     const role = env.db.prepare('SELECT * FROM role WHERE role_id = ?').get(user.type);
     if (!role) throw new MailError('4.3.0 Recipient role is unavailable');
     const allowed = splitList(role.avail_domain);

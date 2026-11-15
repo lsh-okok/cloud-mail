@@ -21,6 +21,24 @@ import oauthService from "./oauth-service";
 import settingService from './setting-service';
 import starService from './star-service';
 import { activeDomains } from '../modules/domains/service.js';
+import { assertCanManageUsers, isAdministrator, isSuperAdmin } from '../modules/administrators/service.js';
+
+function requireAdministratorActor(c, userId) {
+	if (isAdministrator(c.env, userId) && !isSuperAdmin(c.env, c.get('user'))) {
+		throw new BizError(t('unauthorized'), 403);
+	}
+}
+
+function requireOrdinaryUsers(c, userIds) {
+	try {
+		assertCanManageUsers(c.env, userIds);
+	} catch (error) {
+		if (error.code === 'ADMINISTRATOR_PROTECTED') {
+			throw new BizError(t('revokeAdministratorFirst'), 409);
+		}
+		throw error;
+	}
+}
 
 const userService = {
 
@@ -35,7 +53,7 @@ const userService = {
 		const [account, roleRow, permKeys] = await Promise.all([
 			accountService.selectByEmailIncludeDel(c, userRow.email),
 			roleService.selectById(c, userRow.type),
-			userRow.email === c.env.admin ? Promise.resolve(['*']) : permService.userPermKeys(c, userId)
+			isSuperAdmin(c.env, userRow) ? Promise.resolve(['*']) : permService.userPermKeys(c, userId)
 		]);
 
 		const user = {};
@@ -48,7 +66,7 @@ const userService = {
 		user.role = roleRow;
 		user.type = userRow.type;
 
-		if (c.env.admin === userRow.email) {
+		if (isSuperAdmin(c.env, userRow)) {
 			user.role = constant.ADMIN_ROLE
 			user.type = 0;
 		}
@@ -57,7 +75,7 @@ const userService = {
 	},
 
 
-	async resetPassword(c, params, userId) {
+	async resetPassword(c, params, userId, { managed = false } = {}) {
 
 		const { password } = params;
 
@@ -65,6 +83,7 @@ const userService = {
 			throw new BizError(t('pwdMinLength'));
 		}
 		const { salt, hash } = await cryptoUtils.hashPassword(password);
+		if (managed) requireAdministratorActor(c, userId);
 		await orm(c).update(user).set({ password: hash, salt: salt }).where(eq(user.userId, userId)).run();
 	},
 
@@ -98,12 +117,14 @@ const userService = {
 	},
 
 	async delete(c, userId) {
+		requireOrdinaryUsers(c, [userId]);
 		const { syncDelete } = await settingService.query(c);
 		if (syncDelete === settingConst.syncDelete.OPEN) {
 			await this.physicsDelete(c, { userIds: String(userId) });
 			await c.env.kv.delete(kvConst.AUTH_INFO + userId)
 			return;
 		}
+		requireOrdinaryUsers(c, [userId]);
 		await orm(c).update(user).set({ isDel: isDel.DELETE }).where(eq(user.userId, userId)).run();
 		await c.env.kv.delete(kvConst.AUTH_INFO + userId)
 	},
@@ -111,10 +132,18 @@ const userService = {
 	async physicsDelete(c, params) {
 		let { userIds } = params;
 		userIds = userIds.split(',').map(Number);
+		// Remove identities before asynchronous attachment cleanup so a restore
+		// and grant cannot turn a user into an administrator during deletion.
+		c.env.db.transaction(() => {
+			requireOrdinaryUsers(c, userIds);
+			for (const id of userIds) {
+				c.env.db.prepare('DELETE FROM user WHERE user_id=?').run(id);
+				c.env.db.prepare('DELETE FROM server_kv WHERE key=?').run(KvConst.AUTH_INFO + id);
+			}
+		}).immediate();
 		await starService.removeByUserIds(c, userIds);
 		await accountService.physicsDeleteByUserIds(c, userIds);
 		await oauthService.deleteByUserIds(c, userIds);
-		await orm(c).delete(user).where(inArray(user.userId, userIds)).run();
 	},
 
 	async list(c, params) {
@@ -226,7 +255,8 @@ const userService = {
 				sendAction.hasPerm = false;
 			}
 
-			if (user.email === c.env.admin) {
+			user.isAdministrator = isAdministrator(c.env, user);
+			if (user.isAdministrator) {
 				sendAction.sendType = constant.ADMIN_ROLE.sendType;
 				sendAction.sendCount = constant.ADMIN_ROLE.sendCount;
 				sendAction.hasPerm = true;
@@ -269,13 +299,15 @@ const userService = {
 	async setPwd(c, params) {
 
 		const { password, userId } = params;
-		await this.resetPassword(c, { password }, userId);
+		requireAdministratorActor(c, userId);
+		await this.resetPassword(c, { password }, userId, { managed: true });
 		await c.env.kv.delete(KvConst.AUTH_INFO + userId);
 	},
 
 	async setStatus(c, params) {
 
 		const { status, userId } = params;
+		requireOrdinaryUsers(c, [userId]);
 
 		await orm(c)
 			.update(user)
@@ -291,12 +323,14 @@ const userService = {
 	async setType(c, params) {
 
 		const { type, userId } = params;
+		requireOrdinaryUsers(c, [userId]);
 
 		const roleRow = await roleService.selectById(c, type);
 
 		if (!roleRow) {
 			throw new BizError(t('roleNotExist'));
 		}
+		requireOrdinaryUsers(c, [userId]);
 
 		await orm(c)
 			.update(user)
@@ -376,17 +410,20 @@ const userService = {
 	},
 
 	async resetSendCount(c, params) {
+		requireAdministratorActor(c, params.userId);
 		await orm(c).update(user).set({ sendCount: 0 }).where(eq(user.userId, params.userId)).run();
 	},
 
 	async restore(c, params) {
 		const { userId, type } = params
+		requireAdministratorActor(c, userId);
 		await orm(c)
 			.update(user)
 			.set({ isDel: isDel.NORMAL })
 			.where(eq(user.userId, userId))
 			.run();
 		const userRow = await this.selectById(c, userId);
+		if (!userRow) throw new BizError(t('notExistUser'), 404);
 		await accountService.restoreByEmail(c, userRow.email);
 
 		if (type) {

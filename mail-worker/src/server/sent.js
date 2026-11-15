@@ -3,6 +3,7 @@ import { persistAttachments, replaceCidImages, isBlocked } from './inbound.js';
 import { insertRow, camelRow } from './mail-schema.js';
 import kvConst from '../const/kv-const.js';
 import { resolveRecipient, MailError } from './policy.js';
+import { isSuperAdmin } from '../modules/administrators/service.js';
 
 // Build MIME and persist immutable objects first, then reserve quota, save the
 // visible email and insert its delivery task in one synchronous SQLite commit.
@@ -22,7 +23,7 @@ function reserveSender(env, saveParams, recipientCount, internal = false) {
     const account = env.db.prepare('SELECT * FROM account WHERE account_id = ? AND user_id = ? AND is_del = 0')
       .get(saveParams.accountId, saveParams.userId);
     if (!user || user.is_del || user.status || !account || !role) throw new Error('Sender account is unavailable');
-    const admin = user.email.toLowerCase() === String(env.admin).toLowerCase();
+    const admin = isSuperAdmin(env, user);
     if (!admin && (role.send_type === 'ban' || (!internal && role.send_type === 'internal'))) throw new Error('Sending is not permitted');
     const allowedDomains = String(role.avail_domain || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     if (!admin && allowedDomains.length && !allowedDomains.includes(account.email.split('@')[1].toLowerCase())) throw new Error('Sender is not authorized to use this domain');

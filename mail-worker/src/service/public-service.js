@@ -15,6 +15,7 @@ import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
 import { activeDomains } from '../modules/domains/service.js';
+import { isSuperAdmin } from '../modules/administrators/service.js';
 
 const publicService = {
 
@@ -165,9 +166,10 @@ const publicService = {
 
 	async genToken(c, params) {
 
-		await this.verifyUser(c, params)
+		const user = await this.verifyUser(c, params)
 
 		const uuid = uuidv4();
+		if (!isSuperAdmin(c.env, user)) throw new BizError(t('notAdmin'), 403);
 
 		await c.env.kv.put(KvConst.PUBLIC_KEY, uuid);
 
@@ -180,7 +182,7 @@ const publicService = {
 
 		const userRow = await userService.selectByEmailIncludeDel(c, email);
 
-		if (email !== c.env.admin) {
+		if (!isSuperAdmin(c.env, userRow)) {
 			throw new BizError(t('notAdmin'));
 		}
 
@@ -191,6 +193,7 @@ const publicService = {
 		if (!await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password)) {
 			throw new BizError(t('IncorrectPwd'));
 		}
+		return userRow;
 	}
 
 }

@@ -18,7 +18,7 @@
         <span class="form-desc" v-else>{{ $t('regTitle') }}</span>
         <div v-show="show === 'login'">
           <el-input :class="showLoginDomain ? 'email-input' : ''" v-model="form.email"
-                    type="text" :placeholder="$t('emailAccount')" autocomplete="off" @keyup.enter="submit">
+                    type="text" :placeholder="$t(hideLoginDomain ? 'loginFullEmail' : 'loginEmail')" autocomplete="off" @keyup.enter="submit">
             <template #append v-if="showLoginDomain">
               <div @click.stop="openSelect">
                 <el-select
@@ -29,7 +29,7 @@
                     class="select"
                 >
                   <el-option
-                      v-for="item in loginDomainList"
+                      v-for="item in domainList"
                       :key="item"
                       :label="item"
                       :value="item"
@@ -226,10 +226,9 @@ const registerForm = reactive({
   code: null
 })
 const domainList = computed(() => settingStore.domainList || []);
-const loginDomainList = computed(() => settingStore.settings.loginDomainList || domainList.value);
 const registerLoading = ref(false)
-watch([show, showBindForm, domainList, loginDomainList], () => {
-  const options = showBindForm.value || show.value !== 'login' ? domainList.value : loginDomainList.value
+watch([show, showBindForm, domainList], () => {
+  const options = domainList.value
   if (!options.includes(suffix.value)) suffix.value = options[0] || ''
 }, { immediate: true })
 const verifyShow = ref(false)

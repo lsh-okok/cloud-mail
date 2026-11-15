@@ -1,4 +1,5 @@
 import http from '@/axios/index.js'
+import {adminFeatureRequest} from '@/request/features.js'
 
 
 export function userList(params) {
@@ -15,6 +16,12 @@ export function userSetStatus(params) {
 
 export function userSetType(params) {
     return http.put('/user/setType', params)
+}
+
+export function userSetAdministrator(userId, enabled) {
+    return adminFeatureRequest(`/admin/users/${encodeURIComponent(userId)}/administrator`, {
+        method: 'PUT', data: {enabled},
+    })
 }
 
 

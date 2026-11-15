@@ -29,6 +29,7 @@ import verifyUtils from '../utils/verify-utils';
 import { saveSmtpMessage, saveLocalMessage } from '../server/sent.js';
 import { deliveriesForEmail } from '../server/delivery.js';
 import { knownDomains } from '../modules/domains/service.js';
+import { isSuperAdmin } from '../modules/administrators/service.js';
 
 const emailService = {
 
@@ -469,7 +470,7 @@ const emailService = {
 			return knownDomains(c.env).includes(emailUtils.getDomain(email).toLowerCase());
 		});
 
-		if (c.env.admin !== userRow.email) {
+		if (!isSuperAdmin(c.env, userRow)) {
 
 			//发件被禁用
 			if (roleRow.sendType === 'ban') {
@@ -484,7 +485,7 @@ const emailService = {
 		}
 
 		//如果不是管理员，权限设置了发送次数
-		if (c.env.admin !== userRow.email && roleRow.sendCount) {
+		if (!isSuperAdmin(c.env, userRow) && roleRow.sendCount) {
 
 			if (userRow.sendCount >= roleRow.sendCount) {
 				if (roleRow.sendType === 'day') throw new BizError(t('daySendLimit'), 403);
@@ -508,7 +509,7 @@ const emailService = {
 			throw new BizError(t('sendEmailNotCurUser'));
 		}
 
-		if (c.env.admin !== userRow.email) {
+		if (!isSuperAdmin(c.env, userRow)) {
 			//用户没有这个域名的使用权限
 			if(!roleService.hasAvailDomainPerm(roleRow.availDomain, accountRow.email)) {
 				throw new BizError(t('noDomainPermSend'),403)
@@ -977,7 +978,7 @@ const emailService = {
 				let { banEmail, availDomain } = roleRow;
 
 				//如果收件人没有这个域名的使用权限和有邮件拦截，就把邮件改为拒收状态
-				if (email !== c.env.admin) {
+				if (!isSuperAdmin(c.env, accountRow.userId)) {
 
 					if (!roleService.hasAvailDomainPerm(availDomain, email)) {
 						emailValues.status = emailConst.status.BOUNCED;

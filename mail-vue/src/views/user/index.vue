@@ -95,11 +95,14 @@
             <template #default="props">
               <el-button size="small" type="primary" v-if="(props.row.type === 0 && userStore.user.type !== 0)" >{{ $t('action') }}</el-button>
               <el-dropdown v-else >
-                <el-button size="small" type="primary">{{ $t('action') }}</el-button>
+                <el-button size="small" type="primary" :loading="administratorLoading === props.row.userId">{{ $t('action') }}</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item @click="openSetPwd(props.row)" >{{ $t('chgPwd') }}</el-dropdown-item>
                     <el-dropdown-item @click="openSetType(props.row)" >{{ $t('perm') }}</el-dropdown-item>
+                    <el-dropdown-item v-if="canChangeAdministrator(props.row)" :disabled="administratorLoading !== null" @click="setAdministrator(props.row)">
+                      {{ $t(props.row.type === 0 ? 'revokeAdministrator' : 'grantAdministrator') }}
+                    </el-dropdown-item>
                     <template v-if="props.row.type !== 0">
                       <el-dropdown-item v-if="props.row.isDel !== 1" @click="setStatus(props.row)">
                         {{ setStatusName(props.row) }}
@@ -333,6 +336,14 @@
               </div>
             </template>
           </el-dropdown-item>
+          <el-dropdown-item v-if="canChangeAdministrator(rightClickUser)" :disabled="administratorLoading !== null" @click="setAdministrator(rightClickUser)">
+            <template #default>
+              <div class="right-dropdown-item">
+                <Icon icon="fluent:shield-person-20-regular" width="21" height="21" />
+                <span>{{ t(rightClickUser.type === 0 ? 'revokeAdministrator' : 'grantAdministrator') }}</span>
+              </div>
+            </template>
+          </el-dropdown-item>
           <el-dropdown-item v-if="rightClickUser.type !== 0">
             <template #default>
               <div class="right-dropdown-item" v-if="rightClickUser.isDel !== 1" @click="setStatus(rightClickUser)" >
@@ -384,6 +395,7 @@ import {
   userSetPwd,
   userSetStatus,
   userSetType,
+  userSetAdministrator,
   userAdd,
   userRestSendCount,
   userRestore,
@@ -492,6 +504,7 @@ const setTypeShow = ref(false)
 const setPwdShow = ref(false)
 const pagerCount = ref(10)
 const settingLoading = ref(false)
+const administratorLoading = ref(null)
 const tableLoading = ref(true)
 const roleList = reactive([])
 const mySelect = ref({})
@@ -819,6 +832,45 @@ function toRoleName(type) {
   return ""
 }
 
+function canChangeAdministrator(user) {
+  return userStore.user.type === 0 && !!user.userId &&
+      (user.type === 0 || (user.status === 0 && user.isDel !== 1))
+}
+
+async function setAdministrator(user) {
+  if (!canChangeAdministrator(user) || administratorLoading.value !== null) return
+  const enabled = user.type !== 0
+  const self = user.userId === userStore.user.userId
+  administratorLoading.value = user.userId
+  try {
+    const title = t(enabled ? 'grantAdministrator' : 'revokeAdministrator')
+    const message = t(enabled ? 'grantAdministratorConfirm' : self ? 'revokeOwnAdministratorConfirm' : 'revokeAdministratorConfirm', {email: user.email})
+    try {
+      await ElMessageBox.confirm(message, title, {
+        confirmButtonText: t('confirm'), cancelButtonText: t('cancel'), type: 'warning',
+      })
+    } catch { return }
+
+    await userSetAdministrator(user.userId, enabled)
+    ElMessage.success(t(enabled ? 'administratorGranted' : 'administratorRevoked'))
+    if (self && !enabled) {
+      localStorage.removeItem('token')
+      window.location.assign(`${import.meta.env.BASE_URL}login`)
+      return
+    }
+    await getUserList(false)
+  } catch (error) {
+    const messageKey = {
+      LAST_ADMINISTRATOR: 'administratorLastRequired',
+      USER_UNAVAILABLE: 'administratorUserUnavailable',
+      ADMIN_REQUIRED: 'administratorPermissionRequired',
+    }[error.code]
+    ElMessage.error(messageKey ? t(messageKey) : error.message || t('reqFailErrorMsg'))
+  } finally {
+    administratorLoading.value = null
+  }
+}
+
 function resetSendCount(user) {
 
   ElMessageBox.confirm(t('reSendConfirm', {msg: user.email}), {
@@ -1034,7 +1086,7 @@ function getUserList(loading = true) {
     delete newParams.status
     newParams.isDel = 1
   }
-  userList(newParams).then(data => {
+  return userList(newParams).then(data => {
     users.value = data.list.map(item => ({...item, checkedClass: ''}))
     total.value = data.total
     scrollbarRef.value?.setScrollTop(0);

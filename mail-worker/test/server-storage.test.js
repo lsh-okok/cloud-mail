@@ -102,6 +102,7 @@ describe('SQLite persistence and migrations', () => {
     { version: 3, name: 'recipient-links-and-source-mailboxes' },
     { version: 4, name: 'mailbox-verification-and-readonly-nodes' },
     { version: 5, name: 'managed-mail-domains' },
+    { version: 6, name: 'persistent-site-administrators' },
   ]);
 		expect(await createKV(db).get('session', 'json')).toEqual({ userId: 42 });
 		expect(db.pragma('journal_mode', { simple: true })).toBe('wal');

@@ -13,6 +13,7 @@ import roleService from './role-service';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
 import { activeDomains } from '../modules/domains/service.js';
+import { isAdministrator, isSuperAdmin } from '../modules/administrators/service.js';
 
 const accountService = {
 
@@ -69,7 +70,7 @@ const accountService = {
 		const userRow = await userService.selectById(c, userId);
 		const roleRow = await roleService.selectById(c, userRow.type);
 
-		if (userRow.email !== c.env.admin) {
+		if (!isSuperAdmin(c.env, userRow)) {
 
 			if (roleRow.accountCount > 0) {
 				const userAccountCount = await accountService.countUserAccount(c, userId)
@@ -257,6 +258,14 @@ const accountService = {
 
 	async physicsDelete(c, params) {
 		const { accountId } = params
+		const target = await orm(c).select().from(account).where(eq(account.accountId, accountId)).get();
+		const owner = target && await userService.selectByIdIncludeDel(c, target.userId);
+		if (owner && target.email.toLowerCase() === owner.email.toLowerCase()) {
+			throw new BizError(t('delMyAccount'), 409);
+		}
+		if (owner && isAdministrator(c.env, owner) && !isSuperAdmin(c.env, c.get('user'))) {
+			throw new BizError(t('unauthorized'), 403);
+		}
 		await emailService.physicsDeleteByAccountId(c, accountId)
 		await orm(c).delete(account).where(eq(account.accountId, accountId)).run();
 	},

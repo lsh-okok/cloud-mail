@@ -9,6 +9,7 @@ import { LINK_SCHEMA } from '../modules/links/schema.js';
 import { VERIFICATION_SCHEMA } from '../modules/verification/schema.js';
 import { NODE_SCHEMA } from '../modules/nodes/schema.js';
 import { DOMAIN_SCHEMA } from '../modules/domains/schema.js';
+import { ADMINISTRATOR_SCHEMA } from '../modules/administrators/schema.js';
 
 const migrations = [
 	{
@@ -60,6 +61,13 @@ const migrations = [
 		up(db) {
 			db.exec(DOMAIN_SCHEMA);
 		}
+	},
+	{
+		version: 6,
+		name: 'persistent-site-administrators',
+		up(db) {
+			db.exec(ADMINISTRATOR_SCHEMA);
+		}
 	}
 ];
 
@@ -81,9 +89,12 @@ export function migrateDatabase(db) {
 export async function bootstrapAdmin(env) {
 	const { db, admin, admin_password: password } = env;
 	if (!db || !admin) throw new Error('SQLite and an administrator email are required.');
-	let existing = db.prepare('SELECT user_id FROM user WHERE email = ? COLLATE NOCASE').get(admin);
+	const initialized = db.prepare('SELECT initialized FROM site_administrator_state WHERE id=1').get()?.initialized === 1 ||
+		!!db.prepare('SELECT 1 FROM site_administrator LIMIT 1').get();
+	if (initialized) db.prepare('UPDATE site_administrator_state SET initialized=1 WHERE id=1').run();
+	let existing = initialized ? null : db.prepare('SELECT user_id FROM user WHERE email = ? COLLATE NOCASE').get(admin);
 	let created = false;
-	if (!existing) {
+	if (!initialized && !existing) {
 		if (typeof password !== 'string' || password.trim().length < 12) throw new Error('The initial administrator password must contain at least 12 characters.');
 		if (/^REPLACE_/i.test(password.trim())) throw new Error('The initial administrator password must replace the example placeholder with a unique password.');
 		const { salt, hash } = await cryptoUtils.hashPassword(password);
@@ -99,11 +110,19 @@ export async function bootstrapAdmin(env) {
 			return { user_id: userId };
 		}).immediate();
 	}
+	if (!initialized) {
+		db.transaction(() => {
+			if (db.prepare('SELECT initialized FROM site_administrator_state WHERE id=1').get()?.initialized === 1) return;
+			db.prepare('INSERT OR IGNORE INTO site_administrator(user_id,granted_at,granted_by) VALUES(?,?,NULL)').run(existing.user_id, Date.now());
+			db.prepare('UPDATE site_administrator_state SET initialized=1 WHERE id=1').run();
+		}).immediate();
+	}
 	if (env.kv) {
 		const settingRow = (env.orm || drizzle(db)).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
 		settingRow.r2Domain = '';
 		await env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
 	}
-	return { created, userId: existing.user_id };
+	if (!existing) existing = db.prepare('SELECT user_id FROM site_administrator ORDER BY granted_at,user_id LIMIT 1').get();
+	return { created, userId: existing?.user_id ?? null };
 }

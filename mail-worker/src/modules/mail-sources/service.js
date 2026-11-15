@@ -5,6 +5,7 @@ import { recordFeatureChange } from '../shared/events.js';
 import { matchesPlatform, matchesRecipient, normalizeEmail, recipientAddresses } from './matching.js';
 import { assertReplicaReady, nodeRole } from '../nodes/access.js';
 import { activeDomains, knownDomains } from '../domains/service.js';
+import { isSuperAdmin } from '../administrators/service.js';
 
 export { matchesPlatform, matchesRecipient, normalizeEmail } from './matching.js';
 const PROVIDERS = ['mx'];
@@ -120,7 +121,7 @@ export function createLocalSourceMailbox(env, data, { actorId, requestId = '' } 
   if (!domains(env).includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'Choose a configured receiving domain.');
   return env.db.transaction(() => {
     const owner = env.db.prepare('SELECT * FROM user WHERE user_id=?').get(actorId);
-    if (!owner || owner.email.toLowerCase() !== String(env.admin).toLowerCase() || owner.status || owner.is_del) {
+    if (!isSuperAdmin(env, owner)) {
       throw new FeatureError(403, 'ADMIN_REQUIRED', 'An active administrator is required.');
     }
     const prefix = email.split('@')[0];
@@ -175,7 +176,7 @@ export function createLocalSourceMailboxBatch(env, input, { actorId, requestId =
   const ordered = [...entries].sort((left, right) => Number(left.email.split('@')[0].includes('+')) - Number(right.email.split('@')[0].includes('+')));
   return env.db.transaction(() => {
     const owner = env.db.prepare('SELECT * FROM user WHERE user_id=?').get(actorId);
-    if (!owner || owner.email.toLowerCase() !== String(env.admin).toLowerCase() || owner.status || owner.is_del) {
+    if (!isSuperAdmin(env, owner)) {
       throw new FeatureError(403, 'ADMIN_REQUIRED', 'An active administrator is required.');
     }
     const allowedDomains = domains(env);

@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('managed domains across existing application flows', () => {
-  it('refreshes suffix selectors immediately and keeps disabled domains available for login even within a cached settings context', async () => {
+  it('hides disabled domains from public login selectors while retaining them in cached administrative settings', async () => {
     const f = await fixture(), context = serviceContext(f.env);
     expect((await settingService.query(context)).domainList).toEqual(['@example.com']);
     await f.addDomain('public.example');
@@ -94,8 +94,16 @@ describe('managed domains across existing application flows', () => {
     const updated = await settingService.query(context);
     expect(updated.domainList).toEqual(['@public.example', '@second.example']);
     expect(updated.loginDomainList).toEqual(['@public.example', '@example.com', '@second.example']);
-    expect((await f.legacy('/setting/websiteConfig', { admin: false })).domainList).toEqual(updated.domainList);
+    for (const admin of [false, true]) {
+      const publicConfig = await f.legacy('/setting/websiteConfig', { admin });
+      expect(publicConfig.domainList).toEqual(updated.domainList);
+      expect(publicConfig.loginDomainList).toEqual(updated.domainList);
+    }
     expect((await f.success('/admin/mailboxes/domains')).domains).toEqual(['public.example', 'second.example']);
+    await f.setDomain('example.com', { enabled: true });
+    const restored = await f.legacy('/setting/websiteConfig', { admin: false });
+    expect(restored.domainList).toEqual(['@public.example', '@example.com', '@second.example']);
+    expect(restored.loginDomainList).toEqual(restored.domainList);
   });
 
   it('uses a newly added domain for main mailboxes, batches, inbox accounts, administrator-created users and public registration', async () => {
@@ -122,8 +130,10 @@ describe('managed domains across existing application flows', () => {
     }
   });
 
-  it('blocks new addresses on a disabled domain while preserving old administrator login, both mailbox scopes and their public links', async () => {
+  it('blocks new addresses on a disabled domain while preserving full-address login, both mailbox scopes and their public links', async () => {
     const f = await fixture();
+    const ordinaryEmail = 'existing-user@example.com', ordinaryPassword = 'existing-user-password';
+    await f.legacy('/user/add', { method: 'POST', data: { email: ordinaryEmail, password: ordinaryPassword } });
     const local = await f.source({ email: 'local-old@example.com', createLocalAccount: true });
     const range = await f.source({ email: 'range@example.com', provider: 'mx', mxDomain: 'example.com' });
     const localLink = (await f.success('/admin/links', { method: 'POST', data: { mailboxId: local.id, recipients: ['local-child@example.com'] } }, 201)).items[0];
@@ -135,6 +145,11 @@ describe('managed domains across existing application flows', () => {
     await f.addDomain('public.example');
     await f.setDomain('public.example', { isDefault: true });
     await f.setDomain('example.com', { enabled: false });
+    expect((await f.legacy('/setting/websiteConfig', { admin: false })).loginDomainList).toEqual(['@public.example']);
+    const ordinaryToken = (await f.legacy('/login', { method: 'POST', admin: false,
+      data: { email: ordinaryEmail, password: ordinaryPassword } })).token;
+    expect(ordinaryToken).toBeTypeOf('string');
+    expect((await f.legacy('/my/loginUserInfo', { admin: false, authorization: ordinaryToken })).email).toBe(ordinaryEmail);
     expect(await f.login()).toBeTypeOf('string');
     expect((await f.legacy('/my/loginUserInfo')).email).toBe('admin@example.com');
     for (const mailbox of [local, range]) {
@@ -180,7 +195,7 @@ describe('managed domains across existing application flows', () => {
     expect(domains.items.map(item => [item.domain, item.enabled])).toEqual([['public.example', true], ['example.com', false]]);
     expect(await f.success('/admin/mailboxes/domains')).toMatchObject({ domains: ['public.example'] });
     expect((await f.success('/admin/mailboxes')).items.map(item => item.email)).toContain('persisted@public.example');
-    expect((await f.legacy('/setting/websiteConfig', { admin: false })).loginDomainList).toEqual(['@public.example', '@example.com']);
+    expect((await f.legacy('/setting/websiteConfig', { admin: false })).loginDomainList).toEqual(['@public.example']);
   });
 
   it('resolves newly configured domains and old disabled-domain recipients while refusing unconfigured destinations', async () => {

@@ -55,6 +55,7 @@ const zh = {
 	emptyRoleName: '身份名不能为空',
 	roleNameExist: '身份名已存在',
 	delDefRole: '默认身份不能删除',
+	revokeAdministratorFirst: '请先取消该用户的超级管理员身份，再停用、删除或修改权限身份',
 	notJsonDomain: '环境变量domain必须是JSON类型',
 	noDomainVariable: '环境变量domain不能为空',
 	noOsUpBack: '对象存储未配置不能上传背景',

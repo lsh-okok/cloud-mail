@@ -7,6 +7,7 @@ import userService from '../service/user-service';
 import permService from '../service/perm-service';
 import { t } from '../i18n/i18n'
 import app from '../hono/hono';
+import { isSuperAdmin } from '../modules/administrators/service.js';
 
 const exclude = [
 	'/login',
@@ -128,6 +129,12 @@ app.use('*', async (c, next) => {
 	if (!authInfo.tokens.includes(token)) {
 		throw new BizError(t('authExpired'), 401);
 	}
+	const sessionSnapshot = JSON.stringify(authInfo);
+	const currentUser = await userService.selectById(c, userId);
+	if (!currentUser || currentUser.status !== 0) {
+		throw new BizError(t('authExpired'), 401);
+	}
+	authInfo.user = currentUser;
 
 	const permIndex = requirePerms.findIndex(item => {
 		return path.startsWith(item);
@@ -143,7 +150,7 @@ app.use('*', async (c, next) => {
 			return path.startsWith(item);
 		});
 
-		if (userPermIndex === -1 && authInfo.user.email !== c.env.admin) {
+		if (userPermIndex === -1 && !isSuperAdmin(c.env, currentUser)) {
 			throw new BizError(t('unauthorized'), 403);
 		}
 
@@ -155,7 +162,11 @@ app.use('*', async (c, next) => {
 	if (!nowTime.isSame(refreshTime)) {
 		authInfo.refreshTime = dayjs().toISOString();
 		await userService.updateUserInfo(c, authInfo.user.userId);
-		await c.env.kv.put(KvConst.AUTH_INFO + userId, JSON.stringify(authInfo), { expirationTtl: constant.TOKEN_EXPIRE });
+		// A concurrent administrator change may have revoked this session.
+		// Update only the unchanged cached record; never recreate a deleted one.
+		c.env.db.prepare('UPDATE server_kv SET value=?,expiration=? WHERE key=? AND value=?')
+			.run(Buffer.from(JSON.stringify(authInfo)), Math.floor(Date.now() / 1000) + constant.TOKEN_EXPIRE,
+				KvConst.AUTH_INFO + userId, Buffer.from(sessionSnapshot));
 	}
 
 	c.set('user',authInfo.user)

@@ -55,6 +55,7 @@ const en = {
 	emptyRoleName: 'Role name cannot be empty',
 	roleNameExist: 'Role name already exists',
 	delDefRole: 'Default role cannot be deleted',
+	revokeAdministratorFirst: 'Revoke super administrator access before disabling, deleting or changing this user’s role',
 	notJsonDomain: 'Environment variable "domain" must be in JSON format',
 	noDomainVariable: 'Environment variable domain cannot be empty',
 	noOsUpBack: 'Cannot upload background: object storage not configured',

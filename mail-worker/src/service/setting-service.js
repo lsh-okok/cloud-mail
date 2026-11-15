@@ -198,7 +198,7 @@ const settingService = {
 			background: settingRow.background,
 			loginOpacity: settingRow.loginOpacity,
 			domainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
-			loginDomainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.loginDomainList,
+			loginDomainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
 			regKey: settingRow.regKey,
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,

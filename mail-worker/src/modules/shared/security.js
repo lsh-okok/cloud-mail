@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import constant from '../../const/constant.js';
 import KvConst from '../../const/kv-const.js';
 import { FeatureError } from './errors.js';
+import { isSuperAdmin } from '../administrators/service.js';
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -60,7 +61,7 @@ export async function requireAdmin(c, next) {
   // Cached authInfo cannot keep an account alive after disable/delete or identity changes.
   const user = c.env.db.prepare('SELECT user_id, email, status, is_del FROM user WHERE user_id = ?').get(session.userId);
   if (!user || user.status !== 0 || user.is_del !== 0) throw new FeatureError(401, 'SESSION_EXPIRED', 'The session is no longer active.');
-  if (user.email.toLowerCase() !== String(c.env.admin).toLowerCase()) {
+  if (!isSuperAdmin(c.env, user)) {
     throw new FeatureError(403, 'ADMIN_REQUIRED', 'This operation requires the site administrator.');
   }
   c.set('featureAdmin', { userId: user.user_id, email: user.email, sessionToken: session.token });
