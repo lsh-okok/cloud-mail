@@ -143,7 +143,7 @@ async function verifyAttachment(db, email, offline) {
   }
 }
 
-async function smtp(mode, subject) {
+async function smtp(mode, subject, recipient = process.env.ADMIN_EMAIL) {
   const socket = net.createConnection({ host: 'mail', port: 25 });
   const responses = [], waiting = [];
   let buffer = '', lines = [];
@@ -189,10 +189,10 @@ async function smtp(mode, subject) {
       await command(`RCPT TO:<${process.env.ADMIN_EMAIL}>`, [450, 451]);
       console.info('Unavailable app caused a temporary SMTP recipient failure');
     } else {
-      await command(`RCPT TO:<${process.env.ADMIN_EMAIL}>`, 250);
+      await command(`RCPT TO:<${recipient}>`, 250);
       await command('DATA', 354);
       const message = [
-        'From: Probe <probe@outside.example>', `To: ${process.env.ADMIN_EMAIL}`,
+        'From: Probe <probe@outside.example>', `To: ${recipient}`,
         `Subject: ${subject}`, `Message-ID: <${subject}@outside.example>`,
         `Date: ${new Date().toUTCString()}`, 'MIME-Version: 1.0',
         'Content-Type: multipart/mixed; boundary="smoke-fixture"', '',
@@ -210,6 +210,34 @@ async function smtp(mode, subject) {
   } finally {
     socket.destroy();
   }
+}
+
+async function dynamicDomain(action) {
+  const domain = 'managed.smoke.example';
+  const email = `reader@${domain}`;
+  const token = await login();
+  const session = await fetch(origin + '/api/admin/session', { headers: { Authorization: token } });
+  assert.equal(session.status, 200);
+  const csrfToken = (await session.json()).data.csrfToken;
+  const request = async (route, method, data) => {
+    const response = await fetch(origin + '/api' + route, {
+      method, headers: { Authorization: token, 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify(data),
+    });
+    const payload = await response.json();
+    assert.ok(response.ok, `Domain management ${route}: ${payload.error?.message || response.status}`);
+    return payload.data;
+  };
+  if (action === 'create') {
+    await request('/admin/domains', 'POST', { domain });
+    const batch = await request('/admin/mailboxes/batch', 'POST', { emails: [email] });
+    assert.equal(batch.created, 1, 'The dynamically added domain must allow creating its first mailbox');
+    console.info('Created a receiving domain absent from MAIL_DOMAINS without restarting either container');
+  } else {
+    await request(`/admin/domains/${domain}`, 'PUT', { enabled: false });
+    console.info('Stopped creating mailboxes on the new domain; existing mailboxes must still receive');
+  }
+  return email;
 }
 
 async function main() {
@@ -239,6 +267,10 @@ async function main() {
     fs.writeFileSync(path.join(sinkDirectory, 'release'), 'accept deferred recipient\n');
   } else if (mode === 'api-send') {
     await submitThroughApi(subject);
+  } else if (mode === 'domain-create' || mode === 'domain-disable') {
+    await dynamicDomain(mode === 'domain-create' ? 'create' : 'disable');
+  } else if (mode === 'domain-message') {
+    await smtp('message', subject, 'reader@managed.smoke.example');
   } else if (mode === 'outbound-initial' || mode === 'outbound-final') {
     await verifyOutgoing(mode === 'outbound-final');
   } else if (mode === 'tls' || mode === 'submission') {

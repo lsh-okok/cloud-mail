@@ -32,7 +32,7 @@ COPY --from=build /app/mail-worker/node_modules ./mail-worker/node_modules
 COPY --from=build /app/mail-worker/dist ./mail-worker/dist
 COPY docker/app-entrypoint.sh /usr/local/bin/cloud-mail-entrypoint
 RUN chmod 755 /usr/local/bin/cloud-mail-entrypoint
-EXPOSE 3000 2525 10040
+EXPOSE 3000 2525 10040 10041
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+(process.env.APP_BASE_PATH||'').replace(/\/$/,'')+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 ENTRYPOINT ["tini", "--", "/usr/local/bin/cloud-mail-entrypoint"]

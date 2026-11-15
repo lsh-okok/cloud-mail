@@ -1,5 +1,6 @@
 import net from 'node:net';
 import emailUtils from '../utils/email-utils.js';
+import { knownDomains } from '../modules/domains/service.js';
 
 export class MailError extends Error {
   constructor(message, responseCode = 451) {
@@ -26,8 +27,7 @@ export function isTrustedMailPeer(env, address) {
 }
 
 export function mailDomains(env) {
-  const value = typeof env.domain === 'string' ? JSON.parse(env.domain) : env.domain;
-  return (value || []).map(domain => domain.trim().toLowerCase());
+  return knownDomains(env);
 }
 
 export function isBounceRecipient(env, recipient) {

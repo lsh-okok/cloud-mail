@@ -7,6 +7,7 @@ import { migrateMail } from './mail-schema.js';
 import settingService from '../service/setting-service.js';
 import { assertNoPendingRestore } from './backup.js';
 import { createSecretVault } from '../modules/shared/secrets.js';
+import { initializeDomains } from '../modules/domains/service.js';
 
 export function serviceContext(env) {
   const values = new Map();
@@ -36,6 +37,7 @@ export async function createEnvironment(config) {
       verificationState: {}, nodeState: {},
     };
     if (config.node_role !== 'replica') {
+      initializeDomains(env);
       await bootstrapAdmin(env);
       await settingService.refresh(serviceContext(env));
     }

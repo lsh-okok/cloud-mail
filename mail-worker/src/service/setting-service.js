@@ -10,6 +10,7 @@ import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
+import { activeDomains, knownDomains } from '../modules/domains/service.js';
 
 const settingService = {
 
@@ -24,32 +25,15 @@ const settingService = {
 
 	async query(c) {
 
-		if (c.get?.('setting')) {
-			return c.get('setting')
-		}
-
-		const setting = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
+		const setting = c.get?.('setting') || await c.env.kv.get(KvConst.SETTING, { type: 'json' });
 
 		if (!setting) {
 			throw new BizError('数据库未初始化 Database not initialized.');
 		}
 
-		let domainList = c.env.domain;
-
-		if (typeof domainList === 'string') {
-			try {
-				domainList = JSON.parse(domainList)
-			} catch (error) {
-				throw new BizError(t('notJsonDomain'));
-			}
-		}
-
-		if (!c.env.domain) {
-			throw new BizError(t('noDomainVariable'));
-		}
-
-		domainList = domainList.map(item => '@' + item);
-		setting.domainList = domainList;
+		// These are live database configuration, including within a cached request.
+		setting.domainList = activeDomains(c.env).map(domain => '@' + domain);
+		setting.loginDomainList = knownDomains(c.env).map(domain => '@' + domain);
 
 		let projectLink = c.env.project_link;
 		if (typeof projectLink === 'string' && projectLink === 'false') {
@@ -62,7 +46,7 @@ const settingService = {
 
 		setting.projectLink = projectLink;
 
-		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
+		if (!Array.isArray(setting.emailPrefixFilter)) setting.emailPrefixFilter = String(setting.emailPrefixFilter || '').split(",").filter(Boolean);
 
 		c.set?.('setting', setting);
 		return setting;
@@ -214,6 +198,7 @@ const settingService = {
 			background: settingRow.background,
 			loginOpacity: settingRow.loginOpacity,
 			domainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
+			loginDomainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.loginDomainList,
 			regKey: settingRow.regKey,
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,

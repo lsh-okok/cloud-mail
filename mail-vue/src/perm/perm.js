@@ -45,6 +45,12 @@ const routers = {
             meta: { title: 'sourceMailboxes', name: 'mailboxes', menu: true }
         },
         {
+            path: '/admin/domains',
+            name: 'domains',
+            component: () => import('@/views/domains/index.vue'),
+            meta: { title: 'mailDomains', name: 'domains', menu: true }
+        },
+        {
             path: '/admin/links',
             name: 'links',
             component: () => import('@/views/links/index.vue'),

@@ -28,6 +28,7 @@ import forwardMime from '../utils/forward-mime';
 import verifyUtils from '../utils/verify-utils';
 import { saveSmtpMessage, saveLocalMessage } from '../server/sent.js';
 import { deliveriesForEmail } from '../server/delivery.js';
+import { knownDomains } from '../modules/domains/service.js';
 
 const emailService = {
 
@@ -442,7 +443,7 @@ const emailService = {
 		ccEmail.forEach(address => takenAddress.add(address.toLowerCase()));
 		bccEmail = bccEmail.filter(address => !takenAddress.has(address.toLowerCase()));
 
-		const { resendTokens, r2Domain, send, domainList } = await settingService.query(c);
+		const { resendTokens, r2Domain, send } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content || '');
 
@@ -465,8 +466,7 @@ const emailService = {
 
 		//判断接收方是不是全部为站内邮箱
 		const allInternal = [...receiveEmail, ...ccEmail, ...bccEmail].every(email => {
-			const domain = '@' + emailUtils.getDomain(email);
-			return domainList.includes(domain);
+			return knownDomains(c.env).includes(emailUtils.getDomain(email).toLowerCase());
 		});
 
 		if (c.env.admin !== userRow.email) {

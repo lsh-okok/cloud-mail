@@ -6,6 +6,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { createDatabase, executeBatch } from '../src/server/database.js';
 import { bootstrapAdmin, migrateDatabase } from '../src/server/migrations.js';
+import { initializeDomains } from '../src/modules/domains/service.js';
 import { createKV } from '../src/server/kv.js';
 import { createStorage } from '../src/server/storage.js';
 import cryptoUtils from '../src/utils/crypto-utils.js';
@@ -61,6 +62,7 @@ function database(path = ':memory:') {
 	return db;
 }
 function context(db, storage) {
+	initializeDomains({ db, domain: ['example.com'] });
 	const cached = {};
 	return {
 		env: { db, orm: drizzle(db), storage, domain: ['example.com'] },
@@ -99,6 +101,7 @@ describe('SQLite persistence and migrations', () => {
     { version: 2, name: 'persistent-kv' },
     { version: 3, name: 'recipient-links-and-source-mailboxes' },
     { version: 4, name: 'mailbox-verification-and-readonly-nodes' },
+    { version: 5, name: 'managed-mail-domains' },
   ]);
 		expect(await createKV(db).get('session', 'json')).toEqual({ userId: 42 });
 		expect(db.pragma('journal_mode', { simple: true })).toBe('wal');

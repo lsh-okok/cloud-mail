@@ -20,6 +20,7 @@ import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
 import settingService from './setting-service';
 import starService from './star-service';
+import { activeDomains } from '../modules/domains/service.js';
 
 const userService = {
 
@@ -325,7 +326,7 @@ const userService = {
 
 		let { email, type, password } = params;
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!activeDomains(c.env).includes(emailUtils.getDomain(email).toLowerCase())) {
 			throw new BizError(t('notEmailDomain'));
 		}
 

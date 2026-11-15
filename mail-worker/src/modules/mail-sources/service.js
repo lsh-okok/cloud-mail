@@ -4,6 +4,7 @@ import { appendAudit } from '../shared/settings.js';
 import { recordFeatureChange } from '../shared/events.js';
 import { matchesPlatform, matchesRecipient, normalizeEmail, recipientAddresses } from './matching.js';
 import { assertReplicaReady, nodeRole } from '../nodes/access.js';
+import { activeDomains, knownDomains } from '../domains/service.js';
 
 export { matchesPlatform, matchesRecipient, normalizeEmail } from './matching.js';
 const PROVIDERS = ['mx'];
@@ -33,8 +34,7 @@ export function getSourceMailbox(env, id) {
 }
 
 function domains(env) {
-  const configured = typeof env.domain === 'string' ? JSON.parse(env.domain) : env.domain;
-  return configured.map(item => item.toLowerCase());
+  return activeDomains(env);
 }
 
 function validateSource(env, data, current) {
@@ -48,7 +48,10 @@ function validateSource(env, data, current) {
   let mxDomain = data.mxDomain === undefined ? current?.mx_domain ?? null : data.mxDomain;
   if (data.localAccountId !== undefined && data.mxDomain === undefined) mxDomain = null;
   if (data.mxDomain !== undefined && data.localAccountId === undefined) localAccountId = null;
-  if (!domains(env).includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'MX source mailboxes must belong to a configured receiving domain.');
+  // A stopped domain cannot create new mailboxes; its existing configuration
+  // can still be maintained without changing addresses or public identifiers.
+  const allowedDomains = current && email === current.email.toLowerCase() ? knownDomains(env) : domains(env);
+  if (!allowedDomains.includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'MX source mailboxes must belong to an active receiving domain.');
   if ((localAccountId != null) === (mxDomain != null && mxDomain !== '')) throw new FeatureError(400, 'MX_SCOPE_REQUIRED', 'Choose either a local mailbox account or a receiving domain for this MX source.');
   if (localAccountId != null) {
     localAccountId = positiveInt(localAccountId, 'localAccountId');
@@ -61,7 +64,7 @@ function validateSource(env, data, current) {
   } else {
     if (typeof mxDomain !== 'string') throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'Choose a configured MX receiving domain.');
     mxDomain = mxDomain.trim().toLowerCase();
-    if (mxDomain !== email.split('@')[1] || !domains(env).includes(mxDomain)) throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'The MX receiving domain must match the main mailbox domain.');
+    if (mxDomain !== email.split('@')[1] || !allowedDomains.includes(mxDomain)) throw new FeatureError(400, 'INVALID_MX_DOMAIN', 'The MX receiving domain must match the main mailbox domain.');
     localAccountId = null;
   }
   if (Object.hasOwn(data, 'credentials')) throw new FeatureError(400, 'MX_CREDENTIALS_UNSUPPORTED', 'MX sources use local mail storage and do not accept external credentials.');
@@ -180,7 +183,7 @@ export function createLocalSourceMailboxBatch(env, input, { actorId, requestId =
       try {
         const email = normalizeEmail(entry.email);
         if (!email) throw new FeatureError(400, 'INVALID_MAILBOX_EMAIL', BATCH_ERROR_MESSAGES.INVALID_MAILBOX_EMAIL);
-        if (!allowedDomains.includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', BATCH_ERROR_MESSAGES.INVALID_MX_DOMAIN);
+        if (!knownDomains(env).includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', BATCH_ERROR_MESSAGES.INVALID_MX_DOMAIN);
         const account = env.db.prepare('SELECT * FROM account WHERE email=? COLLATE NOCASE').get(email);
         if (account && (account.user_id !== actorId || account.status || account.is_del)) {
           throw new FeatureError(409, 'LOCAL_ACCOUNT_UNAVAILABLE', BATCH_ERROR_MESSAGES.LOCAL_ACCOUNT_UNAVAILABLE);
@@ -198,6 +201,7 @@ export function createLocalSourceMailboxBatch(env, input, { actorId, requestId =
           Object.assign(entry, { status: 'existing', mailboxId: existing.id });
           continue;
         }
+        if (!allowedDomains.includes(email.split('@')[1])) throw new FeatureError(400, 'INVALID_MX_DOMAIN', BATCH_ERROR_MESSAGES.INVALID_MX_DOMAIN);
         const source = createLocalSourceMailbox(env, { email, provider: 'mx', createLocalAccount: true }, { actorId, requestId });
         Object.assign(entry, { status: 'created', mailboxId: source.id });
       } catch (error) {
@@ -274,7 +278,7 @@ function assertReadable(env, source) {
     const row = env.db.prepare(`SELECT a.status,a.is_del,u.status AS user_status,u.is_del AS user_deleted FROM account a
       JOIN user u ON u.user_id=a.user_id WHERE a.account_id=? AND a.email=? COLLATE NOCASE`).get(source.local_account_id, source.email);
     if (!row || row.status || row.is_del || row.user_status || row.user_deleted) throw new FeatureError(404, 'MAILBOX_UNAVAILABLE', 'The local source mailbox is unavailable.');
-  } else if (!domains(env).includes(source.mx_domain)) throw new FeatureError(404, 'MAILBOX_UNAVAILABLE', 'The source receiving domain is unavailable.');
+  } else if (!knownDomains(env).includes(source.mx_domain)) throw new FeatureError(404, 'MAILBOX_UNAVAILABLE', 'The source receiving domain is unavailable.');
 }
 
 // Public callers must use this guard even when a message body comes from a

@@ -144,7 +144,7 @@
 </template>
 <script setup>
 import {Icon} from "@iconify/vue";
-import {defineOptions, nextTick, reactive, ref} from "vue";
+import {computed, defineOptions, nextTick, reactive, ref} from "vue";
 import {roleAdd, roleDelete, rolePermTree, roleRoleList, roleSet, roleSetDef} from "@/request/role.js";
 import loading from '@/components/loading/index.vue';
 import {useRoleStore} from "@/store/role.js";
@@ -157,7 +157,8 @@ defineOptions({
   name: 'role'
 })
 
-const {domainList} = useSettingStore();
+const settingStore = useSettingStore();
+const domainList = computed(() => settingStore.domainList || []);
 const {t, locale} = useI18n();
 const userStore = useUserStore();
 const roleStore = useRoleStore();
@@ -190,7 +191,10 @@ const form = reactive({
   availDomain: []
 })
 
-let domainOptions = []
+const domainOptions = computed(() => (settingStore.settings.loginDomainList || domainList.value).map(domain => {
+  const cleanDomain = domain.replace(/^@/, '');
+  return {label: cleanDomain, value: cleanDomain};
+}))
 
 const expand = ref(false)
 
@@ -202,15 +206,9 @@ rolePermTree().then(tree => {
   treeList.push(...tree)
 })
 
-domainOptions = domainList.map(domain => {
-  const cleanDomain = domain.replace(/^@/, '');
-  return {label: cleanDomain, value: cleanDomain};
-});
-
-
 function availDomainChange() {
   const index = form.availDomain.findIndex(domain => {
-    return !domainOptions.map(option => option.value).includes(domain)
+    return !domainOptions.value.map(option => option.value).includes(domain)
   })
   if (index > -1) {
     form.availDomain.splice(index, 1)

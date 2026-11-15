@@ -12,6 +12,7 @@ const en = {
     inviteCode: 'Invite Code',
     SystemSettings: 'System Settings',
     sourceMailboxes: 'Source Mailboxes',
+    mailDomains: 'Email Domains',
     recipientLinks: 'Recipient Links',
     mailVerification: 'Mail Verification',
     nodeManagement: 'Node Management',

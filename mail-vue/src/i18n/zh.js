@@ -12,6 +12,7 @@ const zh = {
     inviteCode: '注册密钥',
     SystemSettings: '系统设置',
     sourceMailboxes: '主邮箱管理',
+    mailDomains: '邮箱域名',
     recipientLinks: '子邮箱收件链接',
     mailVerification: '邮箱验证',
     nodeManagement: '节点管理',

@@ -8,6 +8,7 @@ import { createApp } from '../src/server/app.js';
 import jwtUtils from '../src/utils/jwt-utils.js';
 import constant from '../src/const/constant.js';
 import KvConst from '../src/const/kv-const.js';
+import { createDomain } from '../src/modules/domains/service.js';
 
 const resources = [];
 async function fixture() {
@@ -89,7 +90,7 @@ describe('exact main mailbox lookup', () => {
 
   it('normalizes an IDNA domain and rejects empty, malformed and overlong email queries', async () => {
     const f = await fixture();
-    f.env.domain.push('xn--bcher-kva.example');
+    createDomain(f.env, { domain: 'xn--bcher-kva.example' });
     const target = await f.source({ email: 'match@xn--bcher-kva.example', mxDomain: 'xn--bcher-kva.example' });
     const exact = await f.success(`/admin/mailboxes?email=${encodeURIComponent('MATCH@BÜCHER.EXAMPLE')}`);
     expect(exact.total).toBe(1);

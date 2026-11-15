@@ -12,6 +12,7 @@ import turnstileService from './turnstile-service';
 import roleService from './role-service';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
+import { activeDomains } from '../modules/domains/service.js';
 
 const accountService = {
 
@@ -35,7 +36,7 @@ const accountService = {
 			throw new BizError(t('notEmail'));
 		}
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!activeDomains(c.env).includes(emailUtils.getDomain(email).toLowerCase())) {
 			throw new BizError(t('notExistDomain'));
 		}
 

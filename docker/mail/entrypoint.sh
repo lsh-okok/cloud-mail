@@ -88,7 +88,9 @@ postconf -e 'mydestination = localhost'
 postconf -e 'inet_interfaces = all'
 postconf -e 'inet_protocols = ipv4'
 postconf -e "mynetworks = 127.0.0.0/8, $MAIL_NETWORK_SUBNET"
-postconf -e "virtual_mailbox_domains = $domain_list"
+# Routing follows the persisted domain registry immediately. Keep MAIL_DOMAINS
+# above for bootstrap DKIM keys; adding signing keys remains deployment-managed.
+postconf -e 'virtual_mailbox_domains = socketmap:inet:app:10041:domains'
 postconf -e 'virtual_transport = lmtp:inet:app:2525'
 postconf -e 'local_transport = error:local delivery disabled'
 postconf -e 'relay_domains ='

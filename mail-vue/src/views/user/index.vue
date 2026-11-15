@@ -377,7 +377,7 @@
 </template>
 
 <script setup>
-import {defineOptions, h, reactive, ref, watch} from 'vue'
+import {computed, defineOptions, h, reactive, ref, watch} from 'vue'
 import {
   userList,
   userDelete,
@@ -459,14 +459,17 @@ const triggerRef = ref({
     return position.value;
   }
 })
-const domainList = settingStore.domainList
+const domainList = computed(() => settingStore.domainList || [])
 
 const addForm = reactive({
   email: '',
-  suffix: settingStore.domainList[0],
+  suffix: '',
   password: '',
   type: null,
 })
+watch(domainList, domains => {
+  if (!domains.includes(addForm.suffix)) addForm.suffix = domains[0] || ''
+}, { immediate: true })
 
 const params = reactive({
   email: '',

@@ -8,6 +8,7 @@ import { SOURCE_SCHEMA } from '../modules/mail-sources/schema.js';
 import { LINK_SCHEMA } from '../modules/links/schema.js';
 import { VERIFICATION_SCHEMA } from '../modules/verification/schema.js';
 import { NODE_SCHEMA } from '../modules/nodes/schema.js';
+import { DOMAIN_SCHEMA } from '../modules/domains/schema.js';
 
 const migrations = [
 	{
@@ -51,6 +52,13 @@ const migrations = [
 		up(db) {
 			db.exec(VERIFICATION_SCHEMA);
 			db.exec(NODE_SCHEMA);
+		}
+	},
+	{
+		version: 5,
+		name: 'managed-mail-domains',
+		up(db) {
+			db.exec(DOMAIN_SCHEMA);
 		}
 	}
 ];

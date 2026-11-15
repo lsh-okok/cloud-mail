@@ -203,9 +203,7 @@ watch(() => accountStore.changeUserAccountName, () => {
 })
 
 watch(() => settingStore.domainList, (list) => {
-  if (!addForm.suffix && list.length > 0) {
-    addForm.suffix = list[0]
-  }
+  if (!list.includes(addForm.suffix)) addForm.suffix = list[0] || ''
 }, {immediate: true})
 
 
@@ -379,7 +377,7 @@ function changeAccount(account) {
 }
 
 function add() {
-  addForm.suffix = addForm.suffix || settingStore.domainList[0]
+  if (!settingStore.domainList.includes(addForm.suffix)) addForm.suffix = settingStore.domainList[0] || ''
   showAdd.value = true
   setTimeout(() => {
     addRef.value.focus()

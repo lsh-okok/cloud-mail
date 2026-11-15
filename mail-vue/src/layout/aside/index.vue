@@ -43,6 +43,11 @@
           <Icon icon="fluent:mail-inbox-24-regular" width="22" height="22" />
           <span class="menu-name" style="margin-left: 15px">{{$t('sourceMailboxes')}}</span>
         </el-menu-item>
+        <el-menu-item @click="router.push({name: 'domains'})" index="domains" v-perm="'*'"
+                      :class="route.meta.name === 'domains' ? 'choose-item' : ''">
+          <Icon icon="fluent:globe-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('mailDomains')}}</span>
+        </el-menu-item>
         <el-menu-item @click="router.push({name: 'links'})" index="links" v-perm="'*'"
                       :class="route.meta.name === 'links' ? 'choose-item' : ''">
           <Icon icon="fluent:link-24-regular" width="22" height="22" />

@@ -184,7 +184,7 @@ describe('main MX mailbox and child recipient sources', () => {
     const domain = saveSourceMailbox(env, { email: 'domain@example.com', mxDomain: 'example.com' });
     message('a1@example.com', 'Domain scoped message');
     expect((await readSourceMessages(env, domain.id, { recipient: 'a1@example.com' })).messages.map(row => row.subject)).toEqual(['Domain scoped message']);
-    env.domain = [];
+    env.domain = ['other.example'];
     expect(() => assertSourceReadable(env, domain.id)).toThrow(expect.objectContaining({ code: 'MAILBOX_UNAVAILABLE' }));
   });
 

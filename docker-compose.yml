@@ -33,6 +33,7 @@ services:
       STATIC_DIR: /app/mail-worker/dist
       LMTP_PORT: "2525"
       POLICY_PORT: "10040"
+      DOMAIN_MAP_PORT: "10041"
       SMTP_HOST: mail
       SMTP_PORT: "587"
       SMTP_SECURE: "false"
@@ -46,6 +47,7 @@ services:
       - "3000"
       - "2525"
       - "10040"
+      - "10041"
     networks:
       mail_internal:
       npm:

@@ -102,6 +102,7 @@ export function loadConfig(source = process.env) {
       trustedMailSubnet: source.MAIL_NETWORK_SUBNET || '172.30.89.0/24',
       lmtpHost: '0.0.0.0', lmtpPort: port(source.LMTP_PORT, 2525, 'LMTP_PORT'),
       policyHost: '0.0.0.0', policyPort: port(source.POLICY_PORT, 10040, 'POLICY_PORT'),
+      domainMapHost: '0.0.0.0', domainMapPort: port(source.DOMAIN_MAP_PORT, 10041, 'DOMAIN_MAP_PORT'),
       mailLogPath: source.MAIL_LOG_PATH || '/var/log/postfix/postfix.log',
     },
   };

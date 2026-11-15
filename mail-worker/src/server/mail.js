@@ -1,6 +1,7 @@
 import { SMTPServer } from 'smtp-server';
 import { migrateMail } from './mail-schema.js';
 import { startPolicyServer, MailError, isTrustedMailPeer } from './policy.js';
+import { startDomainMapServer } from './domain-map.js';
 import { receiveInbound, flushNotifications } from './inbound.js';
 import { flushOutbox, pollPostfixLog } from './delivery.js';
 
@@ -93,9 +94,15 @@ export async function startMailServices(env) {
   env.db.prepare(`UPDATE mail_outbox SET state='uncertain',last_error='Application restarted during SMTP submission; reconciling Postfix logs'
     WHERE state='submitting'`).run();
   const policy = await startPolicyServer(env);
-  let lmtp;
-  try { lmtp = await startLmtpServer(env); }
-  catch (error) { policy.close(); throw error; }
+  let lmtp, domains;
+  try {
+    domains = await startDomainMapServer(env);
+    lmtp = await startLmtpServer(env);
+  }
+  catch (error) {
+    await Promise.all([policy, domains].filter(Boolean).map(server => new Promise(resolve => server.close(resolve))));
+    throw error;
+  }
   // A slow optional HTTP integration must never stop the MTA log reader or
   // submissions. Each loop has its own guard against concurrent executions.
   const loops = [
@@ -105,7 +112,7 @@ export async function startMailServices(env) {
   ];
   return { async close() {
     const pending = loops.map(loop => loop.stop());
-    await Promise.all([new Promise(resolve => lmtp.close(resolve)), new Promise(resolve => policy.close(resolve))]);
+    await Promise.all([lmtp, policy, domains].map(server => new Promise(resolve => server.close(resolve))));
     await Promise.all(pending);
   } };
 }

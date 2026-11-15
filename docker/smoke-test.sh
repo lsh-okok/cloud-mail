@@ -150,6 +150,18 @@ probe tls
 probe relay
 probe unknown
 
+# The running MTA must discover a domain absent from its bootstrap MAIL_DOMAINS.
+# Retiring that domain from new account creation preserves existing delivery.
+probe domain-create
+dynamic_subject="smoke-inbound-dynamic-$smoke_id"
+probe domain-message "$dynamic_subject" >/dev/null
+wait_stored "$dynamic_subject"
+probe domain-disable
+retired_subject="smoke-inbound-retired-$smoke_id"
+probe domain-message "$retired_subject" >/dev/null
+wait_stored "$retired_subject"
+echo 'Live domain changes reached SMTP, LMTP and existing retired-domain mailboxes'
+
 # Renew both files atomically within their mounted directory, as NPM does.
 # Publishing key first deliberately exposes a brief mismatch; maintenance must
 # wait for the matching certificate instead of loading a broken pair.

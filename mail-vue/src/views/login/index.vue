@@ -17,9 +17,9 @@
         <span class="form-desc" v-if="show === 'login'">{{ $t('loginTitle') }}</span>
         <span class="form-desc" v-else>{{ $t('regTitle') }}</span>
         <div v-show="show === 'login'">
-          <el-input :class="!hideLoginDomain ? 'email-input' : ''" v-model="form.email"
+          <el-input :class="showLoginDomain ? 'email-input' : ''" v-model="form.email"
                     type="text" :placeholder="$t('emailAccount')" autocomplete="off" @keyup.enter="submit">
-            <template #append v-if="!hideLoginDomain">
+            <template #append v-if="showLoginDomain">
               <div @click.stop="openSelect">
                 <el-select
                     v-if="show === 'login'"
@@ -29,7 +29,7 @@
                     class="select"
                 >
                   <el-option
-                      v-for="item in domainList"
+                      v-for="item in loginDomainList"
                       :key="item"
                       :label="item"
                       :value="item"
@@ -158,7 +158,7 @@
 <script setup>
 import router from "@/router";
 import {useRoute} from "vue-router";
-import {computed, nextTick, reactive, ref} from "vue";
+import {computed, nextTick, reactive, ref, watch} from "vue";
 import {login} from "@/request/login.js";
 import {register} from "@/request/login.js";
 import {websiteConfig} from "@/request/setting.js";
@@ -225,9 +225,13 @@ const registerForm = reactive({
   confirmPassword: '',
   code: null
 })
-const domainList = settingStore.domainList;
+const domainList = computed(() => settingStore.domainList || []);
+const loginDomainList = computed(() => settingStore.settings.loginDomainList || domainList.value);
 const registerLoading = ref(false)
-suffix.value = domainList[0]
+watch([show, showBindForm, domainList, loginDomainList], () => {
+  const options = showBindForm.value || show.value !== 'login' ? domainList.value : loginDomainList.value
+  if (!options.includes(suffix.value)) suffix.value = options[0] || ''
+}, { immediate: true })
 const verifyShow = ref(false)
 let verifyToken = ''
 let turnstileId = null
@@ -292,6 +296,7 @@ const loginOpacity = computed(() => {
 })
 
 const hideLoginDomain = computed(() => settingStore.settings.loginDomain === 1)
+const showLoginDomain = computed(() => !hideLoginDomain.value && !form.email.includes('@'))
 
 const background = computed(() => {
 
@@ -308,11 +313,21 @@ const openSelect = () => {
 }
 
 const getFullEmail = (email) => {
-  return hideLoginDomain.value ? email : email + suffix.value
+  const value = email.trim()
+  return hideLoginDomain.value || value.includes('@') ? value : value + suffix.value
 }
 
 const getEmailName = (email) => {
-  return email.split('@')[0]
+  return email.trim().split('@')[0]
+}
+
+function canCreateEmail(email) {
+  // Public configuration intentionally hides the domain list in this mode.
+  // The server still validates the complete address against enabled domains.
+  if (hideLoginDomain.value) return true
+  if (domainList.value.includes(email.slice(email.lastIndexOf('@')).toLowerCase())) return true
+  ElMessage.error('请选择允许创建邮箱的域名')
+  return false
 }
 
 function oauthLogin(provider) {
@@ -403,6 +418,8 @@ function bind() {
     return
   }
 
+  if (!canCreateEmail(email)) return
+
   if (settingStore.settings.regKey === 0) {
 
     if (!bindForm.code) {
@@ -489,9 +506,6 @@ function refreshWebsiteConfig() {
   websiteConfig().then(setting => {
     settingStore.settings = setting
     settingStore.domainList = setting.domainList
-    if (!suffix.value && setting.domainList.length > 0) {
-      suffix.value = setting.domainList[0]
-    }
     document.title = setting.title
   }).catch(e => {
     console.error(e)
@@ -512,8 +526,6 @@ function submitRegister() {
     return
   }
 
-  console.log(registerForm.email)
-
   if (getEmailName(registerForm.email).length < settingStore.settings.minEmailPrefix) {
     ElMessage({
       message: t('minEmailPrefix', {msg: settingStore.settings.minEmailPrefix}),
@@ -533,6 +545,8 @@ function submitRegister() {
     })
     return
   }
+
+  if (!canCreateEmail(email)) return
 
   if (!registerForm.password) {
     ElMessage({

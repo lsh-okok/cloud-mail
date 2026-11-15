@@ -14,6 +14,7 @@ import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
+import { activeDomains } from '../modules/domains/service.js';
 
 const publicService = {
 
@@ -104,7 +105,7 @@ const publicService = {
 				throw new BizError(t('notEmail'));
 			}
 
-			if (!c.env.domain.includes(emailUtils.getDomain(emailRow.email))) {
+			if (!activeDomains(c.env).includes(emailUtils.getDomain(emailRow.email).toLowerCase())) {
 				throw new BizError(t('notEmailDomain'));
 			}
 
