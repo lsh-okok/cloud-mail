@@ -29,7 +29,7 @@ printf '%s' "$node_test_output" > "$NODE_COMMAND_TEST_ROOT/download-path"
 exit ${downloadExit}
 `, { mode: 0o755 });
   const deployment = prepareNodeDeployment({}, { id: 'command-test', connectionEnv: 'NODE_ROLE=replica\nNODE_CREDENTIAL=private-test-value\n',
-    options, bundle: { sha256: 'a'.repeat(64) } });
+    options });
   writeFileSync(join(root, 'wrapper.sh'), deployment.result.script);
   const shell = process.platform === 'win32' ? 'bash.exe' : '/bin/sh';
   const result = spawnSync(shell, ['-c', `export PATH="$PWD/bin:$PATH" NODE_COMMAND_TEST_ROOT="$PWD"; ${wrapper ? 'sh ./wrapper.sh' : deployment.result.command}`],

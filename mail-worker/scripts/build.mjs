@@ -1,5 +1,7 @@
 import { build } from 'esbuild';
-import { packageNodeDeployment } from './package-node-deployment.mjs';
+import { rm } from 'node:fs/promises';
+
+await rm('server-dist', { recursive: true, force: true });
 
 await build({
   entryPoints: { index: 'src/server/index.js', cli: 'src/server/cli.js' },
@@ -13,5 +15,3 @@ await build({
   sourcemap: true,
   logLevel: 'info',
 });
-
-await packageNodeDeployment();

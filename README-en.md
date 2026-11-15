@@ -30,7 +30,9 @@
 ## Description
 Create multiple mailboxes on your own domains. This branch runs on a Linux server with Docker Compose: Node.js serves the web client and API, SQLite stores application data, local volumes store attachments, and Postfix/OpenDKIM receive and directly deliver mail. It connects to an existing Nginx Proxy Manager for web HTTPS and mounts its certificates read-only for SMTP. Cloudflare Workers, D1, KV, R2 and Resend are not required.
 
-**Start with the [server deployment guide](doc/server-deployment.md)** (Chinese). Copy `.env.example` to `.env`, configure the domains, administrator, existing NPM network and certificate paths, then run `docker compose up -d --build`. Inbound/outbound port 25 and MX/PTR/SPF/DKIM/DMARC records are required. GitHub Actions builds and tests the project; it does not deploy it.
+**Start with the [server deployment guide](doc/server-deployment.md)** (Chinese). Copy `.env.example` to `.env`, configure the domains, administrator, existing NPM network and certificate paths, then run `docker compose up -d --build`. Inbound/outbound port 25 and MX/PTR/SPF/DKIM/DMARC records are required.
+
+After `main` passes its checks, GitHub Actions publishes `ghcr.io/lsh-okok/cloud-mail:main` and `:sha-<full 40-character commit>` for `linux/amd64`; it does not update running servers automatically. The one-click management primary and read-only node installers pull the latest published `main` image and pin its digest. Re-running an installer preserves the installed version, configuration and data rather than upgrading it. Servers need GitHub and GHCR access; the installers do not fall back to source builds or offline images. The management installer does not enable MX mail delivery; follow the guide for the full Compose mail stack.
 ## Project Showcase
 
 | ![](/doc/demo/en/demo.jpg)  | ![](/doc/demo/en/demo1.jpg) |

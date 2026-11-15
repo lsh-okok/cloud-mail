@@ -2,9 +2,8 @@
 set -euo pipefail
 umask 077
 
-# A versioned, allowlisted server source archive; no runtime config or data.
-primary_source_url='https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/releases/cloud-mail-server-20261114-5aa762eb9251.tar.gz'
-primary_source_sha256='5aa762eb92514756ff2a862abb9080e046f1bbe85361c7d0598285fd2cd481c4'
+# GitHub Actions publishes tested main builds here. Deploy the resolved digest.
+primary_image_repository='ghcr.io/lsh-okok/cloud-mail'
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 usage() {
@@ -17,9 +16,9 @@ usage() {
   --app-url URL       对外 HTTP(S) 地址，默认 http://HOST:PORT
   --mail-domain NAME  邮箱域，默认 cloudmail.test
   --admin-email EMAIL 管理员邮箱，默认 admin@邮箱域
-  --image IMAGE       使用本机已有的应用镜像，跳过下载和构建
-  --source-dir PATH   从本机服务器版源码目录构建
+  --image IMAGE       指定官方 main、sha-提交号或 sha256 摘要镜像；始终从 GHCR 拉取
   --help              显示帮助
+默认拉取 GitHub main 最新通过检查的镜像，需要服务器可访问 ghcr.io。
 自动安装 Docker、生成独立密钥和管理员密码、启动主节点管理服务。
 默认提供管理、邮箱来源、链接及节点管理；MX/Postfix 收发尚未启用。
 同目录重复执行只启动原实例并保留配置和数据，不执行升级。
@@ -34,12 +33,13 @@ primary_port='3000'
 primary_app_url=''
 primary_mail_domain='cloudmail.test'
 primary_admin_email=''
-primary_image_ref=''
-primary_source_dir=''
+primary_image_ref="$primary_image_repository:main"
+primary_image_digest=''
+primary_image_revision=''
 declare -A primary_explicit=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir|--name|--host|--port|--app-url|--mail-domain|--admin-email|--image|--source-dir)
+    --dir|--name|--host|--port|--app-url|--mail-domain|--admin-email|--image)
       [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 缺少参数值。"
       primary_option=${1#--}; primary_option=${primary_option//-/_}
       primary_explicit["$primary_option"]=true
@@ -52,14 +52,13 @@ while [[ $# -gt 0 ]]; do
         --mail-domain) primary_mail_domain=$2 ;;
         --admin-email) primary_admin_email=$2 ;;
         --image) primary_image_ref=$2 ;;
-        --source-dir) primary_source_dir=$2 ;;
       esac
       shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "未知参数：$1。请执行 --help 查看用法。" ;;
   esac
 done
-[[ -z $primary_image_ref || -z $primary_source_dir ]] || fail '--image 和 --source-dir 不能同时使用。'
+[[ $primary_image_ref == "$primary_image_repository:main" || $primary_image_ref =~ ^ghcr\.io/lsh-okok/cloud-mail:sha-[0-9a-f]{40}$ || $primary_image_ref =~ ^ghcr\.io/lsh-okok/cloud-mail@sha256:[0-9a-f]{64}$ ]] || fail '--image 只能使用官方 GHCR main、sha-完整提交号或 sha256 摘要镜像。'
 [[ $primary_dir == /* && $primary_dir != / && $primary_dir != *$'\n'* && $primary_dir != *$'\r'* ]] || fail '安装目录必须是根目录之外的绝对路径。'
 [[ $primary_dir != */../* && $primary_dir != */.. && $primary_dir != */./* && $primary_dir != */. ]] || fail '安装目录不能包含 . 或 .. 路径段。'
 primary_dir=${primary_dir%/}
@@ -67,6 +66,7 @@ primary_dir=${primary_dir%/}
 [[ $primary_port =~ ^[0-9]{1,5}$ ]] && (( 10#$primary_port >= 1 && 10#$primary_port <= 65535 )) || fail '端口必须为 1 到 65535 的整数。'
 primary_port=$((10#$primary_port))
 [[ $(uname -s) == Linux ]] || fail '主节点安装脚本适用于 Linux 服务器。'
+case "$(uname -m)" in x86_64|amd64) ;; *) fail '当前官方镜像仅支持 Linux amd64（x86_64），暂不支持此服务器架构。' ;; esac
 if [[ $(id -u) != 0 ]]; then
   command -v sudo >/dev/null 2>&1 || fail '请使用 root，或 sudo bash install-primary.sh 执行。'
   exec sudo bash "$0" "${primary_original_args[@]}"
@@ -75,13 +75,13 @@ fi
 install_tools() {
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl openssl coreutils diffutils tar iproute2 "$@"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates openssl coreutils diffutils iproute2 "$@"
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ca-certificates curl openssl coreutils diffutils tar iproute "$@"
-  else fail '缺少依赖，请安装 Docker、curl、openssl、coreutils、tar 和 iproute2 后重试。'; fi
+    dnf install -y ca-certificates openssl coreutils diffutils iproute "$@"
+  else fail '缺少依赖，请安装 Docker、openssl、coreutils 和 iproute2 后重试。'; fi
 }
 primary_missing=false
-for primary_tool in curl sha256sum openssl tar awk ss; do
+for primary_tool in sha256sum openssl awk ss; do
   command -v "$primary_tool" >/dev/null 2>&1 || primary_missing=true
 done
 if [[ $primary_missing == true ]]; then install_tools; fi
@@ -140,7 +140,8 @@ restore_parameter() {
 
 if [[ -e $primary_state || -L $primary_state ]]; then
   [[ -f $primary_state && ! -L $primary_state && -f $primary_env && ! -L $primary_env ]] || fail '已有安装状态或配置异常，已停止。'
-  [[ $(read_state FORMAT) == 1 ]] || fail '不支持该安装状态版本。'
+  primary_state_format=$(read_state FORMAT)
+  [[ $primary_state_format == 1 || $primary_state_format == 2 ]] || fail '不支持该安装状态版本。'
   [[ $(read_state INSTALL_DIR) == "$primary_dir" ]] || fail '已有安装目录与状态记录不一致。'
   restore_parameter CONTAINER_NAME primary_name name
   restore_parameter HTTP_PORT primary_port port
@@ -149,11 +150,12 @@ if [[ -e $primary_state || -L $primary_state ]]; then
   restore_parameter MAIL_DOMAIN primary_mail_domain mail_domain
   restore_parameter ADMIN_EMAIL primary_admin_email admin_email
   if [[ ${primary_explicit[image]:-false} == true ]]; then
-    [[ $(read_state SOURCE_MODE) == image && $(read_state SOURCE_VALUE) == "$primary_image_ref" ]] || fail '本次镜像与已有安装不同，已停止。'
+    [[ $(read_state SOURCE_MODE) == registry && $(read_state SOURCE_VALUE) == "$primary_image_ref" ]] || fail '本次镜像与已有安装不同，已停止；安装脚本不执行升级。'
   fi
-  if [[ ${primary_explicit[source_dir]:-false} == true ]]; then
-    primary_source_dir=$(cd "$primary_source_dir" && pwd -P) || fail '源码目录不存在。'
-    [[ $(read_state SOURCE_MODE) == local && $(read_state SOURCE_VALUE) == "$primary_source_dir" ]] || fail '本次源码目录与已有安装不同，已停止。'
+  if [[ $primary_state_format == 2 ]]; then
+    primary_image_digest=$(read_state IMAGE_DIGEST)
+    primary_image_revision=$(read_state IMAGE_REVISION)
+    [[ $primary_image_digest =~ ^ghcr\.io/lsh-okok/cloud-mail@sha256:[0-9a-f]{64}$ && $primary_image_revision =~ ^[0-9a-f]{40}$ ]] || fail '已有安装的镜像版本记录无效。'
   fi
   primary_instance_id=$(read_state INSTANCE_ID)
   primary_image_id=$(read_state IMAGE_ID)
@@ -214,7 +216,6 @@ if [[ $primary_url_authority == *:* ]]; then
 fi
 primary_container=$primary_name
 primary_volume="$primary_name-data"
-primary_build_tag="cloud-mail-primary:$primary_name"
 
 if [[ $primary_first_install == false ]]; then
   docker container inspect "$primary_container" >/dev/null 2>&1 || fail '已有安装的容器缺失，已停止；请保留原卷和配置后人工恢复。'
@@ -233,38 +234,30 @@ else
   if docker container inspect "$primary_container" >/dev/null 2>&1; then fail '同名容器已存在，请换一个 --name；不会覆盖已有服务。'; fi
   if docker volume inspect "$primary_volume" >/dev/null 2>&1; then fail '同名数据卷已存在，请换一个 --name；不会接管旧数据。'; fi
   [[ -z $(ss -H -ltn "sport = :$primary_port") ]] || fail "端口 $primary_port 已被占用，请用 --port 指定空闲端口。"
-  if [[ -n $primary_image_ref ]]; then
-    [[ $primary_image_ref != -* && $primary_image_ref != *$'\n'* && $primary_image_ref != *$'\r'* ]] || fail '应用镜像参数无效。'
-    primary_image_id=$(docker image inspect --format '{{.Id}}' "$primary_image_ref") || fail '--image 指定的应用镜像不存在，请先导入镜像。'
-    primary_source_mode=image; primary_source_value=$primary_image_ref
-  else
-    if docker image inspect "$primary_build_tag" >/dev/null 2>&1; then fail '安装专用镜像标签已存在，请换一个 --name；不会覆盖已有镜像。'; fi
-    primary_temporary=$(mktemp -d "${TMPDIR:-/tmp}/cloud-mail-primary.XXXXXX")
-    if [[ -n $primary_source_dir ]]; then
-      [[ $primary_source_dir != *$'\n'* && $primary_source_dir != *$'\r'* ]] || fail '--source-dir 不能包含换行符。'
-      primary_source_dir=$(cd "$primary_source_dir" && pwd -P) || fail '--source-dir 指定的目录不存在。'
-      primary_build_context=$primary_source_dir
-      primary_source_mode=local; primary_source_value=$primary_source_dir
-    else
-      [[ $primary_source_url == https://* && $primary_source_sha256 =~ ^[0-9a-f]{64}$ ]] || fail '此安装脚本尚未配置有效的服务器安装包。'
-      printf '%s\n' '正在下载并校验主节点安装包…'
-      curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-        --connect-timeout 15 --max-time 600 --output "$primary_temporary/source.tar.gz" "$primary_source_url" || fail '服务器安装包下载失败。'
-      printf '%s  %s\n' "$primary_source_sha256" "$primary_temporary/source.tar.gz" | sha256sum -c - >/dev/null || fail '服务器安装包 SHA-256 校验失败。'
-      tar -tzf "$primary_temporary/source.tar.gz" > "$primary_temporary/paths" || fail '服务器安装包格式无效。'
-      while IFS= read -r primary_archive_path; do
-        [[ $primary_archive_path != /* && $primary_archive_path != *\\* && ! $primary_archive_path =~ (^|/)\.\.(/|$) ]] || fail '安装包包含不安全路径，已停止。'
-      done < "$primary_temporary/paths"
-      mkdir "$primary_temporary/source"
-      tar -xzf "$primary_temporary/source.tar.gz" --no-same-owner -C "$primary_temporary/source"
-      primary_build_context="$primary_temporary/source"
-      primary_source_mode=archive; primary_source_value=$primary_source_url
-    fi
-    [[ -f "$primary_build_context/Dockerfile" && -f "$primary_build_context/docker/app-entrypoint.sh" && -f "$primary_build_context/mail-worker/src/server/index.js" ]] || fail '源码不是可部署的 Cloud Mail 服务器版。'
-    printf '%s\n' '正在构建主节点镜像，首次构建需要访问镜像源和 npm，可能需要数分钟…'
-    docker build --build-arg APP_BASE_PATH= --tag "$primary_build_tag" "$primary_build_context"
-    primary_image_id=$(docker image inspect --format '{{.Id}}' "$primary_build_tag")
+  printf '正在从 GHCR 拉取 GitHub 镜像：%s\n' "$primary_image_ref"
+  primary_temporary=$(mktemp -d "${TMPDIR:-/tmp}/cloud-mail-primary.XXXXXX")
+  if ! docker pull "$primary_image_ref" > "$primary_temporary/pull.log" 2>&1; then
+    cat "$primary_temporary/pull.log" >&2
+    fail 'GHCR 镜像拉取失败；请检查网络或镜像访问权限，不会改用本地旧镜像。'
   fi
+  cat "$primary_temporary/pull.log"
+  # Resolve this pull's result, not a mutable tag or historical RepoDigests.
+  primary_pull_digest=$(sed -n 's/^Digest: //p' "$primary_temporary/pull.log")
+  [[ $primary_pull_digest =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Docker 未返回有效的镜像拉取摘要，已停止。'
+  primary_image_digest="$primary_image_repository@$primary_pull_digest"
+  primary_repo_digests=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$primary_image_digest") || fail '无法读取镜像摘要。'
+  awk -v expected="$primary_image_digest" '$0==expected {found=1} END {exit !found}' <<< "$primary_repo_digests" || fail '拉取的镜像缺少匹配的官方仓库摘要，已停止。'
+  if [[ $primary_image_ref == *@* ]]; then
+    [[ $primary_image_digest == "$primary_image_ref" ]] || fail '镜像摘要与指定版本不一致。'
+  fi
+  primary_image_id=$(docker image inspect --format '{{.Id}}' "$primary_image_digest") || fail '无法读取镜像 ID。'
+  primary_image_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$primary_image_digest") || fail '无法读取镜像提交版本。'
+  primary_image_source=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "$primary_image_digest") || fail '无法读取镜像来源。'
+  [[ $primary_image_revision =~ ^[0-9a-f]{40}$ && $primary_image_source == https://github.com/lsh-okok/cloud-mail ]] || fail '镜像缺少有效的 GitHub 来源或提交记录。'
+  if [[ $primary_image_ref == "$primary_image_repository:sha-"* ]]; then
+    [[ $primary_image_revision == "${primary_image_ref##*:sha-}" ]] || fail '镜像提交记录与指定版本不一致。'
+  fi
+  primary_source_mode=registry; primary_source_value=$primary_image_ref
   [[ $primary_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Docker 返回的应用镜像 ID 无效。'
   primary_instance_id=$(openssl rand -hex 16)
   primary_admin_password=$(openssl rand -hex 24)
@@ -304,10 +297,10 @@ ENV
   printf '%s\n' '正在启动主节点管理服务…'
   docker run -d --name "$primary_container" --label "cloud-mail.installation-id=$primary_instance_id" --label cloud-mail.role=primary \
     --restart unless-stopped --security-opt no-new-privileges:true --env-file "$primary_env" \
-    -p "$primary_port:3000" -v "$primary_volume:/data" "$primary_image_id" >/dev/null || fail "启动失败，配置和数据卷已保留在 $primary_dir；请人工检查，脚本不会覆盖部分安装。"
+    -p "$primary_port:3000" -v "$primary_volume:/data" "$primary_image_digest" >/dev/null || fail "启动失败，配置和数据卷已保留在 $primary_dir；请人工检查，脚本不会覆盖部分安装。"
   primary_env_checksum=$(sha256sum "$primary_env"); primary_env_checksum=${primary_env_checksum%% *}
   cat > "$primary_dir/.install-state.tmp" <<STATE
-FORMAT=1
+FORMAT=2
 INSTALL_DIR=$primary_dir
 CONTAINER_NAME=$primary_container
 HTTP_PORT=$primary_port
@@ -319,6 +312,8 @@ SOURCE_MODE=$primary_source_mode
 SOURCE_VALUE=$primary_source_value
 INSTANCE_ID=$primary_instance_id
 IMAGE_ID=$primary_image_id
+IMAGE_DIGEST=$primary_image_digest
+IMAGE_REVISION=$primary_image_revision
 ENV_SHA256=$primary_env_checksum
 STATE
   chmod 600 "$primary_dir/.install-state.tmp"
@@ -335,6 +330,8 @@ while (( $(date +%s) < primary_deadline )); do
   if docker exec "$primary_container" node -e 'fetch("http://127.0.0.1:3000/health/ready",{signal:AbortSignal.timeout(Number(process.argv[1]))}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))' "$primary_timeout" >/dev/null 2>&1; then
     printf '\n主节点安装成功\n访问地址：%s\n管理员邮箱：%s\n' "$primary_app_url" "$primary_admin_email"
     if [[ $primary_first_install == true ]]; then printf '管理员初始密码：%s\n' "$primary_admin_password"; fi
+    printf '镜像 ID：%s\n' "$primary_image_id"
+    if [[ -n $primary_image_digest ]]; then printf '镜像摘要：%s\nGitHub 提交：%s\n' "$primary_image_digest" "$primary_image_revision"; fi
     printf '配置文件：%s\n容器名称：%s\n数据卷：%s\n' "$primary_env" "$primary_container" "$primary_volume"
     printf '%s\n' '已提供主节点管理服务，可在「节点管理」新增并部署只读节点。' 'MX/Postfix 收发尚未启用；公网域名、HTTPS 和邮件服务需按服务器部署文档配置。'
     exit 0

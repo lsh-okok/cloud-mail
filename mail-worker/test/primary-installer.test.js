@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,30 +9,19 @@ const roots = [];
 const shell = process.platform === 'win32' ? 'bash.exe' : '/bin/bash';
 const installerPath = fileURLToPath(new URL('../../docker/install-primary.sh', import.meta.url));
 const imageId = `sha256:${'ab'.repeat(32)}`;
+const imageDigest = `ghcr.io/lsh-okok/cloud-mail@sha256:${'cd'.repeat(32)}`;
+const revision = 'ef'.repeat(20);
+const imageRef = 'ghcr.io/lsh-okok/cloud-mail:main';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'cloud mail primary ')); roots.push(root);
   mkdirSync(join(root, 'bin'));
-  mkdirSync(join(root, 'source', 'mail-worker'), { recursive: true });
-  mkdirSync(join(root, 'source', 'mail-worker', 'src', 'server'), { recursive: true });
-  mkdirSync(join(root, 'source', 'mail-vue'), { recursive: true });
-  mkdirSync(join(root, 'source', 'docker'), { recursive: true });
-  writeFileSync(join(root, 'source', 'Dockerfile'), 'FROM scratch\n');
-  writeFileSync(join(root, 'source', 'mail-worker', 'package.json'), '{"name":"mail-worker"}\n');
-  writeFileSync(join(root, 'source', 'mail-worker', 'src', 'server', 'index.js'), 'export {};\n');
-  writeFileSync(join(root, 'source', 'mail-vue', 'package.json'), '{"name":"mail-vue"}\n');
-  writeFileSync(join(root, 'source', 'docker', 'app-entrypoint.sh'), '#!/bin/sh\n');
-  const packed = spawnSync(shell, ['-c', 'tar -czf bundle.tar.gz -C source .'], { cwd: root, encoding: 'utf8' });
-  expect(packed.status, packed.stderr).toBe(0);
-  const archive = readFileSync(join(root, 'bundle.tar.gz'));
-  const hash = createHash('sha256').update(archive).digest('hex');
-  const installer = readFileSync(installerPath, 'utf8')
-    .replace(/^primary_source_url=.*$/m, "primary_source_url='https://fixture.example/cloud-mail.tar.gz'")
-    .replace(/^primary_source_sha256=.*$/m, `primary_source_sha256='${hash}'`);
-  writeFileSync(join(root, 'install.sh'), installer);
+  writeFileSync(join(root, 'install.sh'), readFileSync(installerPath, 'utf8'));
   const mock = (name, contents) => writeFileSync(join(root, 'bin', name), `#!/bin/sh\nset -eu\n${contents}`, { mode: 0o755 });
   mock('id', "printf '0\\n'\n");
-  mock('uname', "printf 'Linux\\n'\n");
+  mock('uname', `if [ "\${1:-}" = -m ]; then
+  if [ -f "$PRIMARY_INSTALL_TEST_ROOT/unsupported-arch" ]; then printf aarch64; else printf x86_64; fi
+else printf Linux; fi\n`);
   mock('ss', 'exit 0\n');
   mock('sleep', 'exit 0\n');
   mock('date', `primary_test_time=0
@@ -41,27 +29,27 @@ if [ -f "$PRIMARY_INSTALL_TEST_ROOT/clock" ]; then primary_test_time=$(cat "$PRI
 printf '%s\\n' "$primary_test_time"
 printf '%s\\n' "$(( primary_test_time + 20 ))" > "$PRIMARY_INSTALL_TEST_ROOT/clock"
 `);
-  mock('curl', `primary_test_output=''
-while [ "$#" -gt 0 ]; do
-  case "$1" in --output|-o) shift; primary_test_output=$1 ;; https://*) printf '%s\\n' "$1" >> "$PRIMARY_INSTALL_TEST_ROOT/download.log" ;; esac
-  shift
-done
-[ -n "$primary_test_output" ] || exit 98
-if [ -f "$PRIMARY_INSTALL_TEST_ROOT/bad-archive" ]; then printf corrupted > "$primary_test_output"; else cp "$PRIMARY_INSTALL_TEST_ROOT/bundle.tar.gz" "$primary_test_output"; fi
-`);
-  for (const command of ['wget', 'apt-get', 'dnf']) {
+  for (const command of ['curl', 'wget', 'apt-get', 'dnf']) {
     mock(command, `printf '%s\\n' '${command}' >> "$PRIMARY_INSTALL_TEST_ROOT/unexpected.log"\nexit 97\n`);
   }
   mock('docker', `printf '%s\\n' "$*" >> "$PRIMARY_INSTALL_TEST_ROOT/docker.log"
 case "$1" in
   info) exit 0 ;;
   ps) exit 0 ;;
+  pull)
+    [ ! -f "$PRIMARY_INSTALL_TEST_ROOT/pull-failed" ] || exit 1
+    touch "$PRIMARY_INSTALL_TEST_ROOT/image-present"
+    if [ -f "$PRIMARY_INSTALL_TEST_ROOT/invalid-pull-digest" ]; then printf 'Digest: invalid\\n'; else printf 'Digest: sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\\n'; fi ;;
   image)
-    primary_test_image=''
-    for primary_test_arg in "$@"; do primary_test_image=$primary_test_arg; done
-    case "$primary_test_image" in
-      example/cloud-mail:release) printf '%s\\n' '${imageId}' ;;
-      *) [ -f "$PRIMARY_INSTALL_TEST_ROOT/image-present" ] && printf '%s\\n' '${imageId}' ;;
+    [ -f "$PRIMARY_INSTALL_TEST_ROOT/image-present" ] || exit 1
+    case "$4" in
+      *RepoDigests*)
+        if [ -f "$PRIMARY_INSTALL_TEST_ROOT/historical-digest" ]; then printf 'ghcr.io/lsh-okok/cloud-mail@sha256:1111111111111111111111111111111111111111111111111111111111111111\\n'; fi
+        [ -f "$PRIMARY_INSTALL_TEST_ROOT/missing-digest" ] || printf '%s\\n' '${imageDigest}' ;;
+      *image.revision*) if [ -f "$PRIMARY_INSTALL_TEST_ROOT/bad-revision" ]; then printf unknown; else printf '%s\\n' '${revision}'; fi ;;
+      *image.source*) if [ -f "$PRIMARY_INSTALL_TEST_ROOT/wrong-source" ]; then printf https://example.com/untrusted; else printf 'https://github.com/lsh-okok/cloud-mail\\n'; fi ;;
+      *Id*) printf '%s\\n' '${imageId}' ;;
+      *) exit 98 ;;
     esac ;;
   container)
     [ -f "$PRIMARY_INSTALL_TEST_ROOT/container-present" ] || exit 1
@@ -92,7 +80,7 @@ case "$1" in
         printf 'installer-test-data\\n' ;;
       *) exit 98 ;;
     esac ;;
-  build) touch "$PRIMARY_INSTALL_TEST_ROOT/image-present" ;;
+  build|load) exit 98 ;;
   run)
     while [ "$#" -gt 0 ]; do
       case "$1" in --label) shift; case "$1" in cloud-mail.installation-id=*) printf '%s' "\${1#*=}" > "$PRIMARY_INSTALL_TEST_ROOT/container-id" ;; esac ;; esac
@@ -111,6 +99,7 @@ esac
     { cwd: root, encoding: 'utf8', timeout: 20000 });
   const config = () => readFileSync(join(root, 'installed', 'primary.env'), 'utf8');
   return { root, execute, config,
+    state: () => readFileSync(join(root, 'installed', '.install-state'), 'utf8'),
     mark: name => writeFileSync(join(root, name), ''),
     log: () => existsSync(join(root, 'docker.log')) ? readFileSync(join(root, 'docker.log'), 'utf8') : '',
     env: () => Object.fromEntries(config().split(/\r?\n/).filter(line => /^[A-Z_]+=/.test(line)).map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; })),
@@ -120,7 +109,7 @@ esac
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('primary node installer', () => {
-  it('downloads and verifies the source, creates independent primary credentials and keeps them on repeat', () => {
+  it('pulls the official main image, pins its digest and keeps credentials and version on repeat', () => {
     const f = fixture(), first = f.execute();
     expect(first.error).toBeUndefined();
     expect(first.status, first.stderr).toBe(0);
@@ -139,29 +128,82 @@ describe('primary node installer', () => {
     expect(f.log()).toContain('installer-test-data:/data');
     expect(f.execute().status).toBe(0);
     expect(f.config()).toBe(before);
-    expect(f.log().match(/^build /gm)).toHaveLength(1);
+    expect(f.log().match(/^pull /gm)).toHaveLength(1);
+    expect(f.log()).not.toMatch(/^(?:build|load) /m);
+    expect(f.log()).toContain(`pull ${imageRef}`);
+    expect(f.log().split('\n').filter(line => line.startsWith('image inspect ')).every(line => line.endsWith(imageDigest))).toBe(true);
+    expect(f.log()).toMatch(new RegExp(`^run .* ${imageDigest}$`, 'm'));
+    expect(f.state()).toContain(`SOURCE_VALUE=${imageRef}`);
+    expect(f.state()).toContain(`IMAGE_DIGEST=${imageDigest}`);
+    expect(f.state()).toContain(`IMAGE_REVISION=${revision}`);
+    expect(first.stdout).toContain(imageDigest);
+    expect(first.stdout).toContain(revision);
     expect(f.log().match(/^run /gm)).toHaveLength(1);
     expect(f.log()).toContain('start installer-test');
-    expect(readFileSync(join(f.root, 'download.log'), 'utf8').trim().split('\n')).toHaveLength(1);
     expect(existsSync(join(f.root, 'unexpected.log'))).toBe(false);
   });
 
-  it('uses an existing application image without downloading source or building it', () => {
-    const f = fixture(), result = f.execute(['--image', 'example/cloud-mail:release']);
+  it.each([imageDigest, `ghcr.io/lsh-okok/cloud-mail:sha-${revision}`])('pulls an explicitly pinned official version: %s', image => {
+    const f = fixture(), result = f.execute(['--image', image]);
     expect(result.status, result.stderr).toBe(0);
-    expect(f.log()).not.toMatch(/^build /m);
-    expect(existsSync(join(f.root, 'download.log'))).toBe(false);
-    expect(f.log()).toContain('example/cloud-mail:release');
+    expect(f.log()).toContain(`pull ${image}`);
+    expect(f.log()).not.toMatch(/^(?:build|load) /m);
+    expect(f.state()).toContain(`IMAGE_DIGEST=${imageDigest}`);
     expect(f.env().NODE_ROLE).toBe('primary');
   });
 
-  it('refuses a corrupted source archive before build or container startup', () => {
-    const f = fixture(); f.mark('bad-archive');
+  it('restarts a legacy source installation without changing its image or treating install as upgrade', () => {
+    const f = fixture(); expect(f.execute().status).toBe(0);
+    const before = f.config();
+    writeFileSync(join(f.root, 'installed', '.install-state'), f.state()
+      .replace('FORMAT=2', 'FORMAT=1').replace('SOURCE_MODE=registry', 'SOURCE_MODE=archive')
+      .replace(/^IMAGE_(?:DIGEST|REVISION)=.*\n/gm, ''));
+    const beforeLog = f.log();
+    const repeated = f.execute();
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(f.config()).toBe(before);
+    expect(f.log().slice(beforeLog.length)).toContain('start installer-test');
+    expect(f.log().slice(beforeLog.length)).not.toMatch(/^(?:pull|run|build|load) /m);
+    const changed = f.execute(['--image', imageDigest]);
+    expect(changed.status).toBe(1);
+    expect(changed.stdout + changed.stderr).toContain('不执行升级');
+    expect(f.config()).toBe(before);
+  });
+
+  it.each(['pull-failed', 'invalid-pull-digest', 'missing-digest', 'bad-revision', 'wrong-source'])('refuses incomplete or unverifiable registry images before creating data: %s', marker => {
+    const f = fixture(); f.mark(marker);
+    // A cached image must never rescue a failed pull.
+    f.mark('image-present');
     const result = f.execute();
     expect(result.status).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/校验|摘要/);
+    expect(result.stdout + result.stderr).toMatch(/拉取失败|摘要|提交记录/);
     expect(f.log()).not.toMatch(/^(?:build|run|volume create) /m);
     expect(existsSync(join(f.root, 'installed', 'primary.env'))).toBe(false);
+  });
+
+  it('uses this pull digest even when image metadata includes an older digest for the repository', () => {
+    const f = fixture(); f.mark('historical-digest');
+    const result = f.execute();
+    expect(result.status, result.stderr).toBe(0);
+    expect(f.state()).toContain(`IMAGE_DIGEST=${imageDigest}`);
+  });
+
+  it.each([
+    `ghcr.io/lsh-okok/cloud-mail@sha256:${'11'.repeat(32)}`,
+    `ghcr.io/lsh-okok/cloud-mail:sha-${'22'.repeat(20)}`,
+  ])('rejects a resolved version that differs from the requested immutable version: %s', image => {
+    const f = fixture(), result = f.execute(['--image', image]);
+    expect(result.status).toBe(1);
+    expect(result.stdout + result.stderr).toContain('不一致');
+    expect(f.log()).not.toMatch(/^(?:run|volume create) /m);
+  });
+
+  it('refuses unsupported CPU architectures before pulling an image', () => {
+    const f = fixture(); f.mark('unsupported-arch');
+    const result = f.execute();
+    expect(result.status).toBe(1);
+    expect(result.stdout + result.stderr).toContain('amd64');
+    expect(f.log()).not.toMatch(/^(?:pull|run|volume create) /m);
   });
 
   it('does not take over existing containers, data volumes or a nonempty directory', () => {
@@ -200,7 +242,7 @@ describe('primary node installer', () => {
 
   it('reports readiness failure without printing success or initial credentials', () => {
     const f = fixture(); f.mark('not-ready');
-    const result = f.execute(['--image', 'example/cloud-mail:release']);
+    const result = f.execute();
     expect(result.status).toBe(1);
     expect(result.stdout).not.toContain(f.env().ADMIN_PASSWORD);
     expect(result.stdout + result.stderr).toMatch(/未就绪|未通过|超时/);
@@ -210,7 +252,7 @@ describe('primary node installer', () => {
 
   it('rejects invalid parameters without creating services', () => {
     const f = fixture();
-    for (const args of [['--port', '0'], ['--port', '65536'], ['--name', '../unsafe'], ['--mail-domain', 'bad domain'], ['--app-url', 'file:///tmp/unsafe']]) {
+    for (const args of [['--port', '0'], ['--port', '65536'], ['--name', '../unsafe'], ['--mail-domain', 'bad domain'], ['--app-url', 'file:///tmp/unsafe'], ['--image', 'example/cloud-mail:release'], ['--image', 'ghcr.io/lsh-okok/cloud-mail:latest'], ['--source-dir', '/tmp/source']]) {
       expect(f.execute(args).status).toBe(1);
     }
     expect(f.execute(['--help']).status).toBe(0);

@@ -24,24 +24,23 @@
         <div v-if="usesHttp" class="http-consent"><el-checkbox v-model="deployment.allowInsecureHttp" :disabled="creating">允许通过受信局域网 HTTP 连接主节点</el-checkbox><p class="form-help">当前主地址使用 HTTP，连接内容未经加密。公网连接请改用 HTTPS。</p></div>
       </el-form>
       <el-alert v-if="optionsError" :title="optionsError" type="error" :closable="false"><el-button text :loading="optionsLoading" @click="loadDeploymentOptions">重新检查</el-button></el-alert>
-      <el-alert v-else-if="!optionsLoading && !bundleAvailable" title="主节点尚未准备部署安装包，请先构建后端并重新启动服务。" type="warning" :closable="false" />
+      <el-alert v-else-if="!optionsLoading && !deploymentAvailable" title="暂时无法获取部署设置，请重新加载。" type="warning" :closable="false" />
       <el-alert v-if="createError" :title="createError" type="error" :closable="false" />
-      <p v-if="bundleFormat === 'docker-image'" class="form-help">支持 Linux，需有 curl。安装命令自动下载脚本和主节点已准备的安装包；无法访问软件源时请先安装 Docker。</p>
-      <p v-else class="form-help">支持 Linux，需有 curl，并能访问 GitHub、主节点、Docker 镜像源及 npm 依赖。安装会自动配置并启动节点；缺少 Docker 时会尝试安装。</p>
-      <template #footer><el-button :disabled="creating" @click="createVisible = false">取消</el-button><el-button type="primary" :loading="creating || optionsLoading" :disabled="!bundleAvailable || !!optionsError" @click="create">新增并生成安装命令</el-button></template>
+      <p class="form-help">支持 Linux，需有 curl，并能访问 GitHub、GitHub 镜像仓库（GHCR）和主节点。安装将拉取 main 分支最新构建的镜像；缺少 Docker 时会尝试安装。</p>
+      <template #footer><el-button :disabled="creating" @click="createVisible = false">取消</el-button><el-button type="primary" :loading="creating || optionsLoading" :disabled="!deploymentAvailable || !!optionsError" @click="create">新增并生成安装命令</el-button></template>
     </el-dialog>
     <el-dialog v-model="credentialVisible" title="一键安装节点" width="min(800px, calc(100vw - 28px))" :before-close="beforeCloseCredential" :close-on-click-modal="false" @closed="clearCredential">
       <template v-if="created">
         <el-alert v-if="installationCommand" class="script-created" title="节点已新增，复制命令即可安装" description="下面一条命令会自动从 GitHub 下载脚本，带上当前节点参数并开始安装，无需单独下载或修改脚本。" type="success" :closable="false" />
         <div class="deploy-node-name"><strong>{{ created.node.name }}</strong><el-tag :type="deploymentStatus.type">{{ deploymentStatus.label }}</el-tag></div>
-        <p class="deploy-intro">在目标 Linux 服务器终端中粘贴执行这一条命令即可。请使用 root 或具有 sudo 权限的用户，并确保已安装 curl。{{ created.deployment?.format === 'docker-image' ? '服务器需能访问 GitHub 和主节点；无法访问软件源时请先安装 Docker。' : '服务器需能访问 GitHub、主节点、Docker 镜像源及 npm 依赖。' }}</p>
+        <p class="deploy-intro">在目标 Linux 服务器终端中粘贴执行这一条命令即可。请使用 root 或具有 sudo 权限的用户，并确保已安装 curl。服务器需能访问 GitHub、GHCR 和主节点；无法访问软件源时请先安装 Docker。</p>
         <el-alert v-if="installationExpired" title="本次安装参数已过期" description="首次安装需要重新新增节点并获取有效参数。GitHub 上的通用脚本仍可使用，已经安装成功的节点不受影响。" type="warning" :closable="false" />
         <el-alert v-else-if="!installationCommand" title="未收到完整安装命令，请更新主节点应用后重新新增节点。" type="error" :closable="false" />
         <div class="command-box"><pre aria-label="下载并安装节点的完整命令">{{ installationCommand }}</pre></div>
         <div class="deploy-command-actions">
           <el-button type="primary" size="large" :disabled="!installationCommand || installationUnavailable" @click="copyInstallation(installationCommand)">复制一键安装命令</el-button>
         </div>
-        <p class="form-help">本次安装参数有效至 {{ formatTime(created.deployment?.expiresAt) }}，请在有效期内执行并下载完成安装包。主节点重启、节点停用或撤销、安装包更新会提前使参数失效。带参数的命令包含接入权限，请妥善保管。</p>
+        <p class="form-help">本次安装参数有效至 {{ formatTime(created.deployment?.expiresAt) }}，请在有效期内执行并获取接入配置。主节点重启、节点停用或撤销会提前使参数失效。带参数的命令包含接入权限，请妥善保管。</p>
         <div class="deployment-progress" aria-live="polite">
           <el-alert :title="deploymentStatus.title" :description="deploymentStatus.description" :type="deploymentStatus.type" :closable="false" />
           <el-progress v-if="currentNode?.online && !currentNode.ready && currentNode.snapshot?.total" :percentage="Math.max(0, Math.min(100, currentNode.snapshot.percent || 0))" />
@@ -78,8 +77,8 @@ const query = reactive({ page: 1, pageSize: 20 })
 const { data, loading, error, refresh, cancel } = useFeatureResource(signal => adminFeatureRequest('/admin/nodes', { query, signal }))
 const busyId = ref(''), createVisible = ref(false), name = ref(''), creating = ref(false), createError = ref('')
 const created = ref(null), credentialVisible = ref(false), savedCredential = ref(false)
-const createSections = ref([]), credentialSections = ref([]), optionsLoading = ref(false), optionsError = ref(''), bundleAvailable = ref(false)
-const bundleFormat = ref('source'), installationClock = ref(Date.now())
+const createSections = ref([]), credentialSections = ref([]), optionsLoading = ref(false), optionsError = ref(''), deploymentAvailable = ref(false)
+const installationClock = ref(Date.now())
 const deployment = reactive({ primaryUrl: `${window.location.origin}${import.meta.env.BASE_URL}`.replace(/\/+$/, ''), port: 3001, allowInsecureHttp: false })
 const usesHttp = computed(() => /^http:\/\//i.test(deployment.primaryUrl.trim()))
 function isLocalPrimaryAddress(url) {
@@ -104,20 +103,19 @@ const deploymentStatus = computed(() => {
   if (node?.online) return { type: 'info', label: '正在同步', title: '服务器已连接，正在同步配置', description: '首次同步完成后会自动显示部署成功，页面每 5 秒更新。' }
   if (node?.lastHeartbeatAt) return { type: 'warning', label: '连接中断', title: '节点与主节点的连接已中断', description: '请检查目标服务器上的容器运行状态、网络及主节点地址，连接恢复后会自动继续同步。' }
   if (installationExpired.value) return { type: 'warning', label: '安装参数已过期', title: '本次安装参数已过期', description: '请重新新增节点并获取有效安装参数；已经开始安装时，可先查看服务器终端和容器运行状态。' }
-  return { type: 'info', label: '等待连接', title: '等待目标服务器执行安装命令', description: `${created.value?.deployment?.format === 'docker-image' ? '安装包下载和导入' : '首次构建镜像'}可能需要几分钟，请保持终端运行；连接成功后会在这里显示进度。` }
+  return { type: 'info', label: '等待连接', title: '等待目标服务器执行安装命令', description: '镜像下载和首次同步可能需要几分钟，请保持终端运行；连接成功后会在这里显示进度。' }
 })
 const stateLabel = status => ({ revoked: '已永久撤销', disabled: '已停用', initializing: '首次同步中', online: '在线', offline: '未连接 / 离线' }[status] || status)
 const stateType = status => ({ revoked: 'danger', disabled: 'warning', initializing: 'primary', online: 'success', offline: 'info' }[status] || 'info')
 const formatTime = value => value ? new Date(value).toLocaleString() : '—'
 function pageSizeChanged() { query.page = 1; refresh() }
 async function loadDeploymentOptions() {
-  optionsLoading.value = true; optionsError.value = ''; bundleAvailable.value = false
+  optionsLoading.value = true; optionsError.value = ''; deploymentAvailable.value = false
   try {
     const options = await adminFeatureRequest('/admin/nodes/deployment-options')
     if (options.primaryUrl) deployment.primaryUrl = options.primaryUrl
     if (localPrimaryAddress.value) createSections.value = ['settings']
-    bundleAvailable.value = options.bundleAvailable === true
-    bundleFormat.value = options.bundleFormat === 'docker-image' ? 'docker-image' : 'source'
+    deploymentAvailable.value = options.bundleAvailable === true
   } catch (cause) { optionsError.value = cause.message || '部署设置加载失败，请重试' }
   finally { optionsLoading.value = false }
 }
@@ -126,7 +124,7 @@ function openCreate() {
   loadDeploymentOptions()
 }
 async function create() {
-  if (creating.value || optionsLoading.value || !bundleAvailable.value || optionsError.value) return
+  if (creating.value || optionsLoading.value || !deploymentAvailable.value || optionsError.value) return
   if (!name.value.trim()) { createError.value = '请输入节点名称'; return }
   let primaryUrl
   try {

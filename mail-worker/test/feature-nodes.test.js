@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,14 +95,12 @@ afterEach(async () => {
 });
 
 describe('independent MX replica nodes', () => {
-  it('creates a temporary deployment command, serves only its build bundle, and invalidates it on lifecycle changes', async () => {
+  it('creates a temporary registry deployment command and invalidates access on lifecycle changes', async () => {
     const p = await fixture({ prefix: '/cloud' });
-    const archive = Buffer.from('test-only-build-context');
-    p.env.nodeDeploymentBundle = join(p.root, 'node-deploy.tar.gz');
-    writeFileSync(p.env.nodeDeploymentBundle, archive);
-    expect(await p.ok('/admin/nodes/deployment-options')).toEqual({ primaryUrl: 'https://mail.example.com/cloud', bundleAvailable: true, bundleFormat: 'source' });
+    expect(await p.ok('/admin/nodes/deployment-options')).toEqual({ primaryUrl: 'https://mail.example.com/cloud', bundleAvailable: true, bundleFormat: 'registry-image', imageRef: 'ghcr.io/lsh-okok/cloud-mail:main' });
     expect((await p.api('/admin/nodes/deployment-options', { admin: false })).status).toBe(401);
     const result = await p.ok('/admin/nodes', { method: 'POST', data: { name: 'One command', deployment: { port: 3010 } } }, 201);
+    expect(result.deployment).toMatchObject({ format: 'registry-image', imageRef: 'ghcr.io/lsh-okok/cloud-mail:main' });
     expect(result.deployment.installerUrl).toBe('https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-node/install-node.sh');
     expect(result.deployment.command).toContain(result.deployment.installerUrl);
     expect(result.deployment.command).toContain("'--primary-url' 'https://mail.example.com/cloud'");
@@ -131,14 +129,11 @@ describe('independent MX replica nodes', () => {
     expect(config.headers.get('cache-control')).toBe('no-store');
     expect(config.headers.get('content-type')).toContain('text/plain');
     const configEnv = await config.text();
-    expect(configEnv).toBe(`${result.connection.env}INSTALL_PORT=3010\nINSTALL_BUNDLE_SHA256=${createHash('sha256').update(archive).digest('hex')}\nINSTALL_BUNDLE_IMAGE_ID=\n`);
+    expect(configEnv).toBe(`${result.connection.env}INSTALL_PORT=3010\nINSTALL_IMAGE_REF=ghcr.io/lsh-okok/cloud-mail:main\n`);
     expect(configEnv).not.toContain(p.env.jwt_secret);
     expect(configEnv).not.toContain(p.env.admin_password);
     expect((await p.api(`/node-install/${result.credential}/config.env`, { admin: false })).status).toBe(410);
-    const bundle = await p.api(`${path}/bundle`, { admin: false });
-    expect(bundle.status).toBe(200);
-    expect(bundle.headers.get('cache-control')).toBe('no-store');
-    expect(Buffer.from(await bundle.arrayBuffer())).toEqual(archive);
+    expect((await p.api(`${path}/bundle`, { admin: false })).status).toBe(410);
     const list = JSON.stringify(await p.ok('/admin/nodes'));
     expect(list).not.toContain(token);
     expect(list).not.toContain(result.credential);
@@ -148,18 +143,15 @@ describe('independent MX replica nodes', () => {
     expect((await p.api(`${path}/install.sh`, { admin: false })).status).toBe(410);
     expect((await p.api(`${path}/config.env`, { admin: false })).status).toBe(410);
     await p.ok(`/admin/nodes/${result.node.id}/status`, { method: 'PUT', data: { disabled: false } });
-    expect((await p.api(`${path}/bundle`, { admin: false })).status).toBe(410);
     expect((await p.api(`${path}/config.env`, { admin: false })).status).toBe(410);
   });
 
-  it('rejects invalid deployment choices or missing bundles without creating orphan nodes, and expires installation access', async () => {
+  it('rejects invalid deployment choices without creating orphan nodes and expires installation access', async () => {
     const p = await fixture();
-    p.env.nodeDeploymentBundle = join(p.root, 'missing.tar.gz');
-    expect((await p.ok('/admin/nodes/deployment-options')).bundleAvailable).toBe(false);
+    expect((await p.ok('/admin/nodes/deployment-options')).bundleAvailable).toBe(true);
     const create = deployment => p.api('/admin/nodes', { method: 'POST', data: { name: 'Deploy', deployment } });
-    expect((await create({})).status).toBe(503);
     expect((await create({ primaryUrl: 'http://192.168.31.111:3000' })).status).toBe(400);
-    for (const deployment of [{ port: 0 }, { port: 65536 }, { port: '3001' }, { unexpected: true },
+    for (const deployment of [{ port: 0 }, { port: 65536 }, { port: '3001' }, { unexpected: true }, { imageRef: 'untrusted/image:main' },
       { primaryUrl: 'https://user:pass@primary.example.com' }, { primaryUrl: 'https://primary.example.com/?key=x' },
       { primaryUrl: 'https://primary.example.com/bad.path' }, { primaryUrl: 'https://localhost' },
       { primaryUrl: 'http://127.1', allowInsecureHttp: true }, { primaryUrl: 'https://[::1]' },
@@ -167,7 +159,6 @@ describe('independent MX replica nodes', () => {
       expect((await create(deployment)).status).toBe(400);
     }
     expect((await p.ok('/admin/nodes')).total).toBe(0);
-    writeFileSync(p.env.nodeDeploymentBundle, 'build-context');
     const response = await create({ primaryUrl: 'http://192.168.31.111:3000/cloud', allowInsecureHttp: true });
     expect(response.status).toBe(201);
     const result = (await response.json()).data;
@@ -179,23 +170,16 @@ describe('independent MX replica nodes', () => {
     expect((await p.api(`/node-install/${token}/config.env`, { admin: false })).status).toBe(410);
   });
 
-  it('rejects installation access after restart, package replacement, and permanent revocation', async () => {
+  it('rejects installation access after restart and permanent revocation', async () => {
     const p = await fixture();
-    p.env.nodeDeploymentBundle = join(p.root, 'node-deploy.tar.gz');
-    writeFileSync(p.env.nodeDeploymentBundle, 'original-build-context');
     const create = async () => {
       const result = await p.ok('/admin/nodes', { method: 'POST', data: { name: 'Deploy', deployment: {} } }, 201);
       const token = deploymentToken(result);
       return { result, path: `/node-install/${token}` };
     };
-    const first = await create();
-    writeFileSync(p.env.nodeDeploymentBundle, 'a different build context');
-    expect((await p.api(`${first.path}/install.sh`, { admin: false })).status).toBe(410);
-    expect((await p.api(`${first.path}/bundle`, { admin: false })).status).toBe(410);
-    expect((await p.api(`${first.path}/config.env`, { admin: false })).status).toBe(410);
     const second = await create();
     await p.ok(`/admin/nodes/${second.result.node.id}`, { method: 'DELETE' });
-    expect((await p.api(`${second.path}/bundle`, { admin: false })).status).toBe(410);
+    expect((await p.api(`${second.path}/install.sh`, { admin: false })).status).toBe(410);
     expect((await p.api(`${second.path}/config.env`, { admin: false })).status).toBe(410);
     const third = await create();
     p.env.nodeState.deploymentTickets = new Map();
@@ -203,26 +187,20 @@ describe('independent MX replica nodes', () => {
     expect((await p.api(`${third.path}/config.env`, { admin: false })).status).toBe(410);
   });
 
-  it('serves a verified prebuilt image for offline deployment and rejects inconsistent release metadata', async () => {
-    const p = await fixture(), archive = Buffer.from('test-image-archive');
-    p.env.nodeDeploymentImageDir = p.root;
-    writeFileSync(join(p.root, 'node-image.tar.gz'), archive);
-    const metadata = { format: 'docker-image', imageId: `sha256:${'b'.repeat(64)}`, sha256: createHash('sha256').update(archive).digest('hex') };
-    writeFileSync(join(p.root, 'node-image.json'), JSON.stringify(metadata));
-    expect((await p.ok('/admin/nodes/deployment-options')).bundleFormat).toBe('docker-image');
-    const result = await p.ok('/admin/nodes', { method: 'POST', data: { name: 'Offline', deployment: {} } }, 201);
-    expect(result.deployment.format).toBe('docker-image');
-    expect(result.deployment.script).not.toContain(metadata.imageId);
+  it('uses GitHub main images even when obsolete local deployment settings are configured', async () => {
+    const p = await fixture();
+    p.env.nodeDeploymentImageDir = join(p.root, 'missing-image');
+    p.env.nodeDeploymentBundle = join(p.root, 'missing-source.tar.gz');
+    const options = await p.ok('/admin/nodes/deployment-options');
+    expect(options).toMatchObject({ bundleAvailable: true, bundleFormat: 'registry-image', imageRef: 'ghcr.io/lsh-okok/cloud-mail:main' });
+    const result = await p.ok('/admin/nodes', { method: 'POST', data: { name: 'GitHub image', deployment: {} } }, 201);
     const token = deploymentToken(result);
     const config = await p.api(`/node-install/${token}/config.env`, { admin: false });
     expect(config.status).toBe(200);
-    expect(await config.text()).toContain(`INSTALL_BUNDLE_IMAGE_ID=${metadata.imageId}\n`);
-    const bundle = await p.api(`/node-install/${token}/bundle`, { admin: false });
-    expect(bundle.status).toBe(200);
-    expect(Buffer.from(await bundle.arrayBuffer())).toEqual(archive);
-    writeFileSync(join(p.root, 'node-image.json'), JSON.stringify({ ...metadata, sha256: '0'.repeat(64) }));
-    expect((await p.ok('/admin/nodes/deployment-options')).bundleAvailable).toBe(false);
-    expect((await p.api('/admin/nodes', { method: 'POST', data: { name: 'Broken release', deployment: {} } })).status).toBe(503);
+    const contents = await config.text();
+    expect(contents).toContain('INSTALL_IMAGE_REF=ghcr.io/lsh-okok/cloud-mail:main\n');
+    expect(contents).not.toContain('INSTALL_BUNDLE_');
+    expect((await p.api(`/node-install/${token}/bundle`, { admin: false })).status).toBe(410);
     expect((await p.ok('/admin/nodes')).total).toBe(1);
   });
 

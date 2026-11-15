@@ -10,8 +10,8 @@ usage() {
   --port PORT             访问端口；省略时使用主节点部署设置
   --allow-insecure-http   仅受信局域网允许 HTTP
   --help                  显示此说明
-自动下载节点专属配置和安装包，不需要手工准备 node.env 或镜像目录。
-相同配置可以重复执行；部署令牌请妥善保管。
+自动下载节点专属配置，从官方 GHCR 拉取 main 镜像并固定本次版本。
+相同配置重复执行只启动原节点，不会自动升级；部署令牌请妥善保管。
 HELP
 }
 node_primary_url=''
@@ -53,6 +53,7 @@ run_root() {
   else fail '安装依赖需要 root 或 sudo 权限。'; fi
 }
 [ "$(uname -s)" = Linux ] || fail '此安装命令适用于 Linux 服务器。'
+case "$(uname -m)" in x86_64|amd64) ;; *) fail '官方镜像目前仅支持 Linux amd64（x86_64）服务器。' ;; esac
 if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     run_root apt-get update
@@ -72,7 +73,6 @@ download() {
   else wget -q --https-only --timeout=60 -O "$2" "$1"; fi
 }
 node_install_url="$node_primary_url/api/node-install/$node_install_token"
-node_bundle_url="$node_install_url/bundle"
 printf '%s\n' '正在获取节点接入配置…'
 download "$node_install_url/config.env" "$node_bootstrap/config.download" || fail '接入配置下载失败，请检查主节点地址或重新生成部署命令。'
 [ -s "$node_bootstrap/config.download" ] || fail '主节点返回了空的接入配置。'
@@ -80,9 +80,8 @@ sed 's/\r$//' "$node_bootstrap/config.download" > "$node_bootstrap/config.env"
 # Downloaded dotenv values are data: never source or eval this file.
 awk '/^[[:space:]]*(#.*)?$/ {next} /^[A-Z_][A-Z0-9_]*=/ {next} {exit 1}' "$node_bootstrap/config.env" || fail '接入配置格式无效。'
 config_value() {
-  node_key_count=$(awk -v key="$1=" 'index($0,key)==1 {n++} END {print n+0}' "$node_bootstrap/config.env")
-  [ "$node_key_count" -eq 1 ] || fail '接入配置缺少必要字段或有重复字段。'
-  sed -n "s/^$1=//p" "$node_bootstrap/config.env"
+  awk -v key="$1=" 'index($0,key)==1 {n++; value=substr($0,length(key)+1)} END {if (n!=1) exit 1; print value}' \
+    "$node_bootstrap/config.env" || fail '接入配置缺少必要字段或有重复字段。'
 }
 [ "$(config_value NODE_ROLE)" = replica ] || fail '接入配置不是只读节点配置。'
 node_config_primary=$(config_value NODE_PRIMARY_URL)
@@ -105,22 +104,13 @@ node_config_port=$(config_value INSTALL_PORT)
 validate_port "$node_config_port"
 if [ -z "$node_port" ]; then node_port=$node_config_port; fi
 node_port=$(printf '%s' "$node_port" | sed 's/^0*//')
-node_bundle_sha256=$(config_value INSTALL_BUNDLE_SHA256)
-[ "${#node_bundle_sha256}" -eq 64 ] || fail '安装包摘要无效。'
-case "$node_bundle_sha256" in *[!0-9a-f]*) fail '安装包摘要无效。' ;; esac
-node_bundle_image_id=$(config_value INSTALL_BUNDLE_IMAGE_ID)
-if [ -n "$node_bundle_image_id" ]; then
-  case "$node_bundle_image_id" in sha256:*) ;; *) fail '安装包镜像 ID 无效。' ;; esac
-  node_digest=${node_bundle_image_id#sha256:}
-  [ "${#node_digest}" -eq 64 ] || fail '安装包镜像 ID 无效。'
-  case "$node_digest" in *[!0-9a-f]*) fail '安装包镜像 ID 无效。' ;; esac
-  unset node_digest
-fi
+node_image_ref=$(config_value INSTALL_IMAGE_REF)
+node_repository=ghcr.io/lsh-okok/cloud-mail
+[ "$node_image_ref" = "$node_repository:main" ] || fail '接入配置必须使用官方镜像 ghcr.io/lsh-okok/cloud-mail:main。'
 node_env_source="$node_bootstrap/node.env"
 sed '/^INSTALL_[A-Z0-9_]*=/d' "$node_bootstrap/config.env" > "$node_env_source"
 node_container="cloud-mail-node-$node_id"
 node_volume="$node_container-data"
-node_image="cloud-mail-node:$node_id"
 node_install_root="${CLOUD_MAIL_NODE_INSTALL_DIR:-${HOME:?无法确定当前用户的主目录}/.cloud-mail/nodes/$node_id}"
 
 case "$node_install_root" in /*) ;; *) fail '节点安装目录必须为绝对路径。' ;; esac
@@ -146,7 +136,6 @@ fi
 
 node_missing_tools=false
 node_tools='cmp sha256sum'
-if [ -z "$node_bundle_image_id" ]; then node_tools="$node_tools tar"; fi
 for node_tool in $node_tools; do
   command -v "$node_tool" >/dev/null 2>&1 || node_missing_tools=true
 done
@@ -154,10 +143,10 @@ if [ "$node_missing_tools" = true ]; then
   printf '%s\n' '正在安装部署所需的校验工具…'
   if command -v apt-get >/dev/null 2>&1; then
     run_root apt-get update
-    run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y coreutils diffutils tar
+    run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y coreutils diffutils
   elif command -v dnf >/dev/null 2>&1; then
-    run_root dnf install -y coreutils diffutils tar
-  else fail '缺少部署工具，请安装 coreutils、diffutils 和 tar 后重试。'; fi
+    run_root dnf install -y coreutils diffutils
+  else fail '缺少部署工具，请安装 coreutils 和 diffutils 后重试。'; fi
 fi
 
 node_docker_sudo=false
@@ -175,15 +164,57 @@ docker_cmd() {
 [ ! -L "$node_install_root" ] || fail '节点目录不能是符号链接。'
 mkdir -p "$node_install_root"
 chmod 700 "$node_install_root"
+mkdir "$node_install_root/.install-lock" 2>/dev/null || fail '此节点已有安装命令正在执行，请稍后重试。'
+trap 'rm -rf "$node_bootstrap"; rmdir "$node_install_root/.install-lock" 2>/dev/null || true' EXIT HUP INT TERM
 node_temp=$(mktemp -d "$node_install_root/.install-XXXXXX")
-trap 'rm -rf "$node_temp" "$node_bootstrap"' EXIT HUP INT TERM
+trap 'rm -rf "$node_temp" "$node_bootstrap"; rmdir "$node_install_root/.install-lock" 2>/dev/null || true' EXIT HUP INT TERM
 sed 's/\r$//' "$node_env_source" > "$node_temp/node.env"
 [ ! -L "$node_install_root/node.env" ] || fail '节点配置不能是符号链接。'
-if [ ! -e "$node_install_root/node.env" ]; then
-  ln "$node_temp/node.env" "$node_install_root/node.env" 2>/dev/null || true
+node_state="$node_install_root/.install-state"
+[ ! -L "$node_state" ] || fail '节点部署记录不能是符号链接。'
+node_env_checksum=$(sha256sum "$node_temp/node.env"); node_env_checksum=${node_env_checksum%% *}
+if [ -e "$node_install_root/node.env" ]; then
+  cmp -s "$node_temp/node.env" "$node_install_root/node.env" || fail '已有节点配置与本次命令不一致，已停止；原配置和数据未修改。'
 fi
-cmp -s "$node_temp/node.env" "$node_install_root/node.env" || fail '已有节点配置与本次命令不一致，已停止；原配置和数据未修改。'
-chmod 600 "$node_install_root/node.env"
+
+validate_digest() {
+  case "$1" in sha256:*) ;; *) return 1 ;; esac
+  node_digest_hex=${1#sha256:}
+  [ "${#node_digest_hex}" -eq 64 ] || return 1
+  case "$node_digest_hex" in *[!0-9a-f]*) return 1 ;; esac
+}
+validate_revision() {
+  [ "${#1}" -eq 40 ] || return 1
+  case "$1" in *[!0-9a-f]*) return 1 ;; esac
+}
+state_value() {
+  awk -v key="$1=" 'index($0,key)==1 {n++; value=substr($0,length(key)+1)} END {if (n!=1) exit 1; print value}' \
+    "$node_state" || fail '已有节点部署记录无效，已停止。'
+}
+node_has_state=false
+node_image_digest=''
+node_revision=''
+node_source_mode=registry
+if [ -e "$node_state" ]; then
+  [ -f "$node_state" ] && [ -f "$node_install_root/node.env" ] || fail '已有节点部署记录或配置缺失，已停止。'
+  [ "$(state_value FORMAT)" = 1 ] && [ "$(state_value NODE_ID)" = "$node_id" ] && \
+    [ "$(state_value HTTP_PORT)" = "$node_port" ] && [ "$(state_value ENV_SHA256)" = "$node_env_checksum" ] || fail '已有节点部署记录与本次配置或端口不一致，已停止。'
+  node_source_mode=$(state_value SOURCE_MODE)
+  node_image_id=$(state_value IMAGE_ID)
+  validate_digest "$node_image_id" || fail '已有节点镜像记录无效，已停止。'
+  node_image_digest=$(state_value IMAGE_DIGEST)
+  node_revision=$(state_value REVISION)
+  case "$node_source_mode" in
+    registry)
+      [ "$(state_value IMAGE_REF)" = "$node_image_ref" ] || fail '已有节点镜像来源记录无效，已停止。'
+      case "$node_image_digest" in "$node_repository"@sha256:*) ;; *) fail '已有节点镜像摘要记录无效，已停止。' ;; esac
+      validate_digest "${node_image_digest#*@}" && validate_revision "$node_revision" || fail '已有节点镜像版本记录无效，已停止。' ;;
+    legacy)
+      [ -z "$(state_value IMAGE_REF)" ] && [ -z "$node_image_digest" ] && [ -z "$node_revision" ] || fail '已有旧节点来源记录无效，已停止。' ;;
+    *) fail '已有节点部署来源记录无效，已停止。' ;;
+  esac
+  node_has_state=true
+fi
 
 node_existing=false
 if docker_cmd container inspect "$node_container" >/dev/null 2>&1; then
@@ -191,49 +222,82 @@ if docker_cmd container inspect "$node_container" >/dev/null 2>&1; then
   [ "$node_existing_id" = "$node_id" ] || fail '同名容器已被其他服务占用，已停止。'
   node_existing_port=$(docker_cmd container inspect --format '{{range (index .HostConfig.PortBindings "3000/tcp")}}{{println .HostPort}}{{end}}' "$node_container")
   [ "$node_existing_port" = "$node_port" ] || fail "已有节点使用端口 $node_existing_port，本次指定 $node_port。已停止，请使用原端口重新执行。"
-  if [ -n "$node_bundle_image_id" ]; then
-    node_existing_image=$(docker_cmd container inspect --format '{{.Image}}' "$node_container")
-    [ "$node_existing_image" = "$node_bundle_image_id" ] || fail '已有节点的镜像版本与安装包不同，已停止。'
+  [ -f "$node_install_root/node.env" ] || fail '已有节点缺少原配置，已停止；不会接管未知容器。'
+  node_existing_mount=$(docker_cmd container inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}:{{.Name}}{{end}}{{end}}' "$node_container")
+  [ "$node_existing_mount" = "volume:$node_volume" ] || fail '已有节点的数据卷挂载不一致，已停止。'
+  docker_cmd volume inspect "$node_volume" >/dev/null 2>&1 || fail '已有节点的数据卷缺失，已停止。'
+  node_existing_image=$(docker_cmd container inspect --format '{{.Image}}' "$node_container")
+  validate_digest "$node_existing_image" || fail '已有节点镜像 ID 无效，已停止。'
+  if [ "$node_has_state" = true ]; then
+    [ "$node_existing_image" = "$node_image_id" ] || fail '已有节点的镜像与部署记录不同，已停止。'
+    if [ "$node_source_mode" = registry ]; then
+      [ "$(docker_cmd container inspect --format '{{index .Config.Labels "cloud-mail.image-digest"}}' "$node_container")" = "$node_image_digest" ] && \
+        [ "$(docker_cmd container inspect --format '{{index .Config.Labels "cloud-mail.env-sha256"}}' "$node_container")" = "$node_env_checksum" ] || fail '已有节点镜像或配置标签与部署记录不同，已停止。'
+    fi
+  else
+    node_source_mode=legacy
+    node_image_id=$node_existing_image
   fi
+  docker_cmd container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$node_container" > "$node_temp/container.env"
+  # Docker runtime paths and the access URL are deliberately overridden below.
+  awk 'NR==FNR {if ($0 ~ /^[A-Z_][A-Z0-9_]*=/) {key=$0; sub(/=.*/, "", key); if (key !~ /^(APP_URL|APP_BASE_PATH|PORT|DATA_DIR|SQLITE_PATH|OBJECTS_DIR|STATIC_DIR)$/) expected[key]=$0} next}
+    {key=$0; sub(/=.*/, "", key); if (key in expected && expected[key]==$0) delete expected[key]}
+    END {for (key in expected) exit 1}' "$node_temp/node.env" "$node_temp/container.env" || fail '已有容器的接入配置与本次命令不同，已停止；原配置和数据未修改。'
   node_existing=true
 fi
+[ "$node_has_state" = false ] || [ "$node_existing" = true ] || fail '已有部署记录对应的容器缺失，已停止；请保留配置和数据后人工恢复。'
 
 if [ "$node_existing" = true ]; then
   printf '%s\n' '正在启动已有节点，保留原配置与数据…'
   docker_cmd start "$node_container" >/dev/null
 else
-  node_tagged_image=$(docker_cmd image inspect --format '{{.Id}}' "$node_image" 2>/dev/null || true)
-  if [ -n "$node_tagged_image" ]; then
-    if [ -n "$node_bundle_image_id" ]; then
-      [ "$node_tagged_image" = "$node_bundle_image_id" ] || fail '同名镜像与安装包版本不一致，已停止。'
-    fi
-  else
-    printf '%s\n' '正在下载并校验节点安装包…'
-    download "$node_bundle_url" "$node_temp/bundle.tar.gz" || fail '安装包下载失败，请重新生成部署命令后重试。'
-    command -v sha256sum >/dev/null 2>&1 || fail '缺少 sha256sum，请安装 coreutils 后重试。'
-    printf '%s  %s\n' "$node_bundle_sha256" "$node_temp/bundle.tar.gz" | sha256sum -c - >/dev/null || fail '安装包校验失败，已停止部署。'
-    if [ -n "$node_bundle_image_id" ]; then
-      printf '%s\n' '正在导入主节点提供的镜像，无需联网构建…'
-      docker_cmd load --input "$node_temp/bundle.tar.gz" >/dev/null
-      docker_cmd image inspect "$node_bundle_image_id" >/dev/null 2>&1 || fail '安装包未包含预期镜像，已停止部署。'
-      docker_cmd tag "$node_bundle_image_id" "$node_image"
-    else
-      mkdir "$node_temp/source"
-      tar -xzf "$node_temp/bundle.tar.gz" -C "$node_temp/source"
-      printf '%s\n' '正在构建节点镜像，首次构建可能需要数分钟…'
-      docker_cmd build --tag "$node_image" "$node_temp/source"
-    fi
+  if docker_cmd volume inspect "$node_volume" >/dev/null 2>&1; then fail '同名数据卷已存在，已停止；不会覆盖或接管旧数据。'; fi
+  printf '%s\n' '正在拉取官方 main 镜像，首次下载可能需要数分钟…'
+  if ! docker_cmd pull "$node_image_ref" > "$node_temp/pull.log" 2>&1; then
+    cat "$node_temp/pull.log" >&2
+    fail '官方镜像拉取失败，请检查网络、GHCR 公开访问权限和 amd64 平台支持；不会使用旧缓存镜像。'
   fi
+  cat "$node_temp/pull.log"
+  node_pull_digest=$(sed -n 's/^Digest: //p' "$node_temp/pull.log")
+  validate_digest "$node_pull_digest" || fail 'Docker 未返回有效的镜像拉取摘要，已停止。'
+  node_image_digest="$node_repository@$node_pull_digest"
+  docker_cmd image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$node_image_digest" > "$node_temp/repo-digests" || fail '无法读取拉取镜像的官方摘要，已停止。'
+  awk -v expected="$node_image_digest" '$0==expected {found=1} END {exit !found}' "$node_temp/repo-digests" || fail '拉取镜像的官方 RepoDigest 不匹配，已停止。'
+  node_image_id=$(docker_cmd image inspect --format '{{.Id}}' "$node_image_digest")
+  validate_digest "$node_image_id" || fail '拉取镜像的 ID 无效，已停止。'
+  node_revision=$(docker_cmd image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$node_image_digest")
+  validate_revision "$node_revision" || fail '官方镜像缺少有效的 Git 提交版本，已停止。'
+  ln "$node_temp/node.env" "$node_install_root/node.env" 2>/dev/null || true
+  cmp -s "$node_temp/node.env" "$node_install_root/node.env" || fail '已有节点配置与本次命令不一致，已停止；原配置和数据未修改。'
+  chmod 600 "$node_install_root/node.env"
   printf '%s\n' '正在启动节点…'
   docker_cmd volume create "$node_volume" >/dev/null
   docker_cmd run -d --name "$node_container" --label "cloud-mail.node-id=$node_id" \
+    --label "cloud-mail.image-digest=$node_image_digest" --label "cloud-mail.env-sha256=$node_env_checksum" \
     --restart unless-stopped --security-opt no-new-privileges:true \
     --env-file "$node_install_root/node.env" \
     -e NODE_ROLE=replica -e PORT=3000 -e DATA_DIR=/data \
     -e SQLITE_PATH=/data/cloud-mail.sqlite -e OBJECTS_DIR=/data/objects \
     -e STATIC_DIR=/app/mail-worker/dist -e APP_BASE_PATH= \
     -e "APP_URL=http://localhost:$node_port" \
-    -p "$node_port:3000" -v "$node_volume:/data" "$node_image" >/dev/null
+    -p "$node_port:3000" -v "$node_volume:/data" "$node_image_digest" >/dev/null
+fi
+
+if [ "$node_has_state" = false ]; then
+  node_recorded_ref=$node_image_ref
+  if [ "$node_source_mode" = legacy ]; then node_recorded_ref=''; fi
+  cat > "$node_temp/install-state" <<STATE
+FORMAT=1
+NODE_ID=$node_id
+HTTP_PORT=$node_port
+ENV_SHA256=$node_env_checksum
+SOURCE_MODE=$node_source_mode
+IMAGE_REF=$node_recorded_ref
+IMAGE_DIGEST=$node_image_digest
+IMAGE_ID=$node_image_id
+REVISION=$node_revision
+STATE
+  ln "$node_temp/install-state" "$node_state" || fail '无法保存节点部署记录，请保留配置和数据后人工检查。'
 fi
 
 printf '%s\n' '服务已启动，正在等待节点完成首次同步（最多 180 秒）…'
@@ -246,6 +310,8 @@ while :; do
   if docker_cmd exec "$node_container" node -e 'fetch("http://127.0.0.1:3000/health/ready", {signal: AbortSignal.timeout(Number(process.argv[1]))}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))' "$node_probe_timeout" >/dev/null 2>&1; then
     printf '%s\n' "部署成功，节点已同步并可取信。访问端口：$node_port。"
     printf '%s\n' "配置已保存：$node_install_root/node.env"
+    printf '%s\n' "部署记录：$node_state"
+    if [ "$node_source_mode" = registry ]; then printf '%s\n' "镜像版本：$node_revision（$node_image_digest）"; fi
     exit 0
   fi
   node_running=$(docker_cmd container inspect --format '{{.State.Running}}' "$node_container")

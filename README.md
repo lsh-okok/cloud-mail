@@ -32,7 +32,9 @@
 
 使用自己的域名创建多个邮箱。此分支默认在 Linux 服务器通过 Docker Compose 运行：Node.js 提供网页和 API，SQLite 保存数据，本地持久卷保存附件，Postfix/OpenDKIM 接收和直接投递邮件。网页 HTTPS 接入已有 Nginx Proxy Manager，并只读使用其证书；不需要 Cloudflare Workers、D1、KV、R2 或 Resend。
 
-**部署入口：[Linux 服务器部署](doc/server-deployment.md)**。从 `.env.example` 创建 `.env`，配置域名、管理员、NPM 网络和证书后运行 `docker compose up -d --build`。部署前需要服务器入站/出站 25 可用并完成 MX、PTR、SPF、DKIM、DMARC 配置。GitHub Actions 仅运行构建和测试，不自动部署。
+**部署入口：[Linux 服务器部署](doc/server-deployment.md)**。从 `.env.example` 创建 `.env`，配置域名、管理员、NPM 网络和证书后运行 `docker compose up -d --build`。部署前需要服务器入站/出站 25 可用并完成 MX、PTR、SPF、DKIM、DMARC 配置。
+
+GitHub Actions 在 `main` 检查通过后发布 `ghcr.io/lsh-okok/cloud-mail:main` 和 `:sha-<完整40位提交号>` 镜像（`linux/amd64`），不自动更新运行中的服务器。一键管理主节点与只读节点默认拉取最新已发布的 `main` 并按摘要固定版本，无需服务器编译；重复执行保留原版本和数据，不执行升级。服务器须访问 GitHub、GHCR，不提供源码或离线镜像回退。管理一键安装不含 MX 收发；完整邮件服务仍按文档配置 Compose。
 
 ## 项目展示
 

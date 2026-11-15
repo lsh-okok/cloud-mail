@@ -1,12 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
 import { FeatureError } from '../shared/errors.js';
 import { normalizeBasePath } from '../shared/urls.js';
 
 const lifetime = 60 * 60 * 1000;
+const imageRef = 'ghcr.io/lsh-okok/cloud-mail:main';
 const installerUrl = 'https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-node/install-node.sh';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const quote = value => `'${String(value).replace(/'/g, `'"'"'`)}'`;
@@ -40,32 +37,6 @@ export function deploymentOptions(env, input) {
   return { primaryUrl: url.href.replace(/\/+$/, ''), port, allowInsecureHttp: url.protocol === 'http:' };
 }
 
-// Only a build-time allowlist is archived; never expose the application directory.
-export async function deploymentBundle(env) {
-  const state = env.nodeState ||= {};
-  try {
-    let image;
-    if (env.nodeDeploymentImageDir) {
-      const metadata = await readFile(join(env.nodeDeploymentImageDir, 'node-image.json'), 'utf8');
-      if (metadata.length > 4096) throw new Error();
-      image = JSON.parse(metadata);
-      if (image.format !== 'docker-image' || !/^sha256:[a-f0-9]{64}$/.test(image.imageId) || !/^[a-f0-9]{64}$/.test(image.sha256)) throw new Error();
-    }
-    const path = image ? join(env.nodeDeploymentImageDir, 'node-image.tar.gz')
-      : env.nodeDeploymentBundle || join(dirname(env.staticDir), 'server-dist', 'node-deploy.tar.gz');
-    const info = await stat(path);
-    if (!info.isFile() || info.size <= 0 || info.size > (image ? 2 * 1024 ** 3 : 128 * 1024 ** 2)) throw new Error();
-    const key = `${path}:${info.size}:${info.mtimeMs}`;
-    if (state.deploymentBundle?.key !== key) {
-      const hash = createHash('sha256');
-      for await (const chunk of createReadStream(path)) hash.update(chunk);
-      state.deploymentBundle = { key, path, size: info.size, sha256: hash.digest('hex') };
-    }
-    if (image && state.deploymentBundle.sha256 !== image.sha256) throw new Error();
-    return { ...state.deploymentBundle, format: image ? 'docker-image' : 'source', ...(image ? { imageId: image.imageId } : {}) };
-  } catch { throw new FeatureError(503, 'NODE_BUNDLE_UNAVAILABLE', '节点安装包尚未生成，请先构建并更新主节点，再进行一键部署。'); }
-}
-
 function tickets(env) {
   const state = env.nodeState ||= {};
   const entries = state.deploymentTickets ||= new Map();
@@ -73,7 +44,7 @@ function tickets(env) {
   return entries;
 }
 
-export function prepareNodeDeployment(env, { id, connectionEnv, options, bundle }) {
+export function prepareNodeDeployment(env, { id, connectionEnv, options }) {
   const entries = tickets(env);
   if (entries.size >= 1000) throw new FeatureError(429, 'NODE_DEPLOYMENT_CAPACITY', '待部署节点过多，请稍后重试。');
   const token = randomBytes(32).toString('base64url');
@@ -84,18 +55,17 @@ export function prepareNodeDeployment(env, { id, connectionEnv, options, bundle 
     ...(options.allowInsecureHttp ? ['--allow-insecure-http'] : [])].map(quote).join(' ');
   const command = `curl -fsSL --connect-timeout 15 --max-time 120 ${quote(installerUrl)} -o 'install-node.sh' && sh 'install-node.sh' ${args}`;
   const script = `#!/bin/sh\nset -eu\n${command}\n`;
-  const ticket = { id, script, connectionEnv, port: options.port, expiresAt, statusVersion: 1,
-    bundleSha256: bundle.sha256, bundleImageId: bundle.imageId || '' };
+  const ticket = { id, script, connectionEnv, port: options.port, expiresAt, statusVersion: 1 };
   return {
     commit: () => entries.set(digest(token), ticket),
     result: { command,
       installerUrl, localCommand: `sudo sh 'install-node.sh' ${args}`,
-      script, filename: `cloud-mail-node-${id}.sh`, expiresAt: new Date(expiresAt).toISOString(), format: bundle.format || 'source', ...options },
+      script, filename: `cloud-mail-node-${id}.sh`, expiresAt: new Date(expiresAt).toISOString(), format: 'registry-image', imageRef, ...options },
   };
 }
 
 function installationTicket(c) {
-  if ((c.env.node_role || 'primary') !== 'primary') throw new FeatureError(403, 'PRIMARY_ONLY', '仅主节点提供安装包。');
+  if ((c.env.node_role || 'primary') !== 'primary') throw new FeatureError(403, 'PRIMARY_ONLY', '仅主节点提供接入配置。');
   const token = c.req.param('token');
   const entries = tickets(c.env), key = /^[A-Za-z0-9_-]{43}$/.test(token) ? digest(token) : '';
   const ticket = entries.get(key);
@@ -110,33 +80,24 @@ function installationTicket(c) {
 export function mountNodeDeploymentRoutes(router) {
   router.get('/admin/nodes/deployment-options', async c => {
     if ((c.env.node_role || 'primary') !== 'primary') throw new FeatureError(403, 'PRIMARY_ONLY', '仅主节点提供部署管理。');
-    let bundleAvailable = false, bundleFormat = 'source';
-    try { const bundle = await deploymentBundle(c.env); bundleAvailable = true; bundleFormat = bundle.format; } catch (error) { if (!(error instanceof FeatureError)) throw error; }
-    return c.json({ data: { primaryUrl: `${c.env.app_url}${c.env.base_path || ''}`, bundleAvailable, bundleFormat } });
+    return c.json({ data: { primaryUrl: `${c.env.app_url}${c.env.base_path || ''}`,
+      bundleAvailable: true, bundleFormat: 'registry-image', imageRef } });
   });
   router.get('/node-install/:token/install.sh', async c => {
     const ticket = installationTicket(c);
-    const bundle = await deploymentBundle(c.env);
-    if (bundle.sha256 !== ticket.bundleSha256) throw new FeatureError(410, 'NODE_INSTALL_EXPIRED', '主节点版本已更新，请重新创建部署命令。');
     c.header('Content-Type', 'text/x-shellscript; charset=utf-8');
     c.header('Content-Disposition', 'attachment; filename="install-node.sh"');
     return c.body(ticket.script);
   });
   router.get('/node-install/:token/config.env', async c => {
-    const ticket = installationTicket(c), bundle = await deploymentBundle(c.env);
-    if (bundle.sha256 !== ticket.bundleSha256) throw new FeatureError(410, 'NODE_INSTALL_EXPIRED', '主节点版本已更新，请重新创建部署命令。');
+    const ticket = installationTicket(c);
     const connectionEnv = ticket.connectionEnv.endsWith('\n') ? ticket.connectionEnv : ticket.connectionEnv + '\n';
     c.header('Content-Type', 'text/plain; charset=utf-8');
     c.header('Content-Disposition', 'attachment; filename="node.env"');
     c.header('Cache-Control', 'no-store');
-    return c.body(`${connectionEnv}INSTALL_PORT=${ticket.port}\nINSTALL_BUNDLE_SHA256=${ticket.bundleSha256}\nINSTALL_BUNDLE_IMAGE_ID=${ticket.bundleImageId}\n`);
+    return c.body(`${connectionEnv}INSTALL_PORT=${ticket.port}\nINSTALL_IMAGE_REF=${imageRef}\n`);
   });
-  router.get('/node-install/:token/bundle', async c => {
-    const ticket = installationTicket(c), bundle = await deploymentBundle(c.env);
-    if (bundle.sha256 !== ticket.bundleSha256) throw new FeatureError(410, 'NODE_INSTALL_EXPIRED', '主节点版本已更新，请重新创建部署命令。');
-    c.header('Content-Type', 'application/gzip');
-    c.header('Content-Disposition', 'attachment; filename="node-deploy.tar.gz"');
-    c.header('Content-Length', String(bundle.size));
-    return new Response(Readable.toWeb(createReadStream(bundle.path)), { headers: c.res.headers });
+  router.get('/node-install/:token/bundle', () => {
+    throw new FeatureError(410, 'NODE_BUNDLE_REMOVED', '节点安装已改为从 GitHub 镜像仓库拉取 main 镜像，请使用最新安装脚本。');
   });
 }

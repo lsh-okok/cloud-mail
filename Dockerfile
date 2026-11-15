@@ -12,14 +12,15 @@ RUN pnpm --dir mail-worker install --frozen-lockfile \
     && pnpm --dir mail-vue install --frozen-lockfile
 COPY mail-worker ./mail-worker
 COPY mail-vue ./mail-vue
-COPY Dockerfile ./Dockerfile
-COPY docker/app-entrypoint.sh ./docker/app-entrypoint.sh
 ARG APP_BASE_PATH=""
 RUN pnpm --dir mail-worker run build \
     && APP_BASE_PATH="$APP_BASE_PATH" VITE_BASE_URL=/api VITE_OUT_DIR=../mail-worker/dist VITE_PWA_NAME="Cloud Mail" pnpm --dir mail-vue run build \
     && pnpm --dir mail-worker prune --prod
 
 FROM node:24-bookworm-slim AS runtime
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.source="https://github.com/lsh-okok/cloud-mail" \
+    org.opencontainers.image.revision=$VCS_REF
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates gosu tini \
     && rm -rf /var/lib/apt/lists/*

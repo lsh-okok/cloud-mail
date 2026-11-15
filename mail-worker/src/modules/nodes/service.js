@@ -7,7 +7,7 @@ import { project, snapshotRecords } from './projection.js';
 import { validatePublicLink } from '../public-mail/service.js';
 import { readSourceMessages } from '../mail-sources/service.js';
 import { coordinatedSourceRead } from '../mail-sources/coordinator.js';
-import { deploymentOptions, deploymentBundle, prepareNodeDeployment, mountNodeDeploymentRoutes } from './deployment.js';
+import { deploymentOptions, prepareNodeDeployment, mountNodeDeploymentRoutes } from './deployment.js';
 
 export { startNodeRuntime } from './runtime.js';
 export { NODE_SCHEMA } from './schema.js';
@@ -120,11 +120,10 @@ export function mountNodeRoutes(router) {
     const data = await strictJson(c, ['name', 'deployment']);
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.trim().length > 80 || /[\u0000-\u001f\u007f]/.test(data.name)) throw new FeatureError(400, 'INVALID_NODE_NAME', 'Enter a node name containing 1 to 80 characters.');
     const options = data.deployment === undefined ? null : deploymentOptions(c.env, data.deployment);
-    const bundle = options ? await deploymentBundle(c.env) : null;
     const id = randomUUID(), credential = randomBytes(32).toString('base64url'), now = Date.now();
     const url = options?.primaryUrl || `${c.env.app_url}${c.env.base_path || ''}`;
     const env = `# Save this file securely. Use a separate data directory/volume from the primary.\nNODE_ROLE=replica\nNODE_PRIMARY_URL=${url}\nNODE_ID=${id}\nNODE_CREDENTIAL=${credential}\nNODE_ALLOW_INSECURE_HTTP=${options?.allowInsecureHttp || false}\nNODE_UPSTREAM_TIMEOUT=15000\nAPP_URL=http://localhost:${options?.port || 3001}\nAPP_BASE_PATH=\nPORT=3000\nDATA_DIR=./data-node-${id}\nJWT_SECRET=${randomBytes(32).toString('hex')}\nDATA_ENCRYPTION_KEY=${randomBytes(32).toString('hex')}\nDATA_ENCRYPTION_KEY_ID=v1\n`;
-    const deployment = options ? prepareNodeDeployment(c.env, { id, connectionEnv: env, options, bundle }) : null;
+    const deployment = options ? prepareNodeDeployment(c.env, { id, connectionEnv: env, options }) : null;
     const node = c.env.db.transaction(() => {
       if (c.env.db.prepare('SELECT count(*) AS total FROM cluster_node').get().total >= 1000) throw new FeatureError(429, 'NODE_CAPACITY', 'Remove obsolete revoked records before creating more nodes.');
       c.env.db.prepare('INSERT INTO cluster_node(id,name,credential_digest,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, data.name.trim(), digest(credential), now, now);

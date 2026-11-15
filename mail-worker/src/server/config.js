@@ -85,7 +85,6 @@ export function loadConfig(source = process.env) {
     node_role: nodeRole, node_primary_url: nodePrimaryUrl, node_id: nodeId,
     node_credential: nodeCredential, node_allow_insecure_http: nodeAllowInsecureHttp,
     node_upstream_timeout: nodeUpstreamTimeout, verificationSmtpAllowCidrs,
-    nodeDeploymentImageDir: source.NODE_DEPLOYMENT_IMAGE_DIR ? resolve(source.NODE_DEPLOYMENT_IMAGE_DIR) : '',
     orm_log: source.ORM_LOG === 'true', analysis_cache: source.ANALYSIS_CACHE === 'true',
     trust_proxy: source.TRUST_PROXY !== 'false' && trustedProxies.length > 0, trusted_proxies: trustedProxies,
     project_link: source.PROJECT_LINK !== 'false',

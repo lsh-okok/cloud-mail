@@ -14,17 +14,19 @@ NPM 证书目录 ── 只读挂载 ── Postfix STARTTLS
 
 ## 一键安装管理主节点
 
-在新的 Linux 服务器可先使用公共安装脚本部署管理主节点，随后在「节点管理」中新增只读节点：
+在新的 Linux amd64（x86_64）服务器可先使用公共安装脚本部署管理主节点，随后在「节点管理」中新增只读节点：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-primary/install-primary.sh -o install-primary.sh && bash install-primary.sh
 ```
 
-脚本自动安装 Docker 和必要工具，从同一仓库下载与脚本固定摘要匹配的服务器源码包，构建应用并生成独立管理员密码、JWT 与数据加密密钥，使用持久数据卷启动。默认目录 `/opt/cloud-mail-primary`、容器名 `cloud-mail-primary`、端口3000，完成后打印访问地址、管理员邮箱和初始密码。可用 `--host` 指定访问IP，`--port`、`--dir`、`--name` 指定独立实例，`--mail-domain` 和 `--admin-email` 修改邮箱域及管理员邮箱；通过 `--image` 使用已有应用镜像或 `--source-dir` 使用本地服务器版源码。
+GitHub Actions 在 `main` 通过后端测试、前后端构建、部署检查和 Docker 收发演练后，发布 `ghcr.io/lsh-okok/cloud-mail:main` 以及 `ghcr.io/lsh-okok/cloud-mail:sha-<完整40位提交号>`。当前发布平台为 `linux/amd64`。`main` 指向最新成功发布的版本，尚在构建或检查失败的提交不会替换它；镜像附带 GitHub 来源与提交记录。
 
-此安装提供管理页面、主邮箱来源、链接、验证任务和只读节点管理，不启动 Postfix/OpenDKIM，MX 收发尚未启用。完整公网收发需要按下文继续配置邮件服务、域名 DNS、TLS 证书与TCP25。首次源码构建需访问 GitHub、Docker 镜像源、系统软件源及 npm。
+脚本自动安装 Docker 和必要工具，默认从 GHCR 拉取 `main` 镜像，解析并记录不可变的仓库摘要后按摘要启动；不在服务器编译。脚本生成独立管理员密码、JWT 与数据加密密钥，使用持久数据卷启动。默认目录 `/opt/cloud-mail-primary`、容器名 `cloud-mail-primary`、端口3000，完成后打印访问地址、管理员邮箱、初始密码、镜像摘要与 GitHub 提交。可用 `--host` 指定访问IP，`--port`、`--dir`、`--name` 指定独立实例，`--mail-domain` 和 `--admin-email` 修改邮箱域及管理员邮箱。`--image` 只接受官方仓库的 `main`、`sha-<完整提交号>` 或 `@sha256:<摘要>`，始终从 GHCR 拉取。
 
-同一安装重复运行保留原配置与数据；不同参数、同名外部容器或已有其他数据卷会拒绝覆盖。请保管安装目录中的配置以及数据卷备份。本脚本位于本项目的 `docker/install-primary.sh`，公共发布路径为 `ok-email-scripts/cloud-mail-primary/install-primary.sh`。
+此安装提供管理页面、主邮箱来源、链接、验证任务和只读节点管理，不启动 Postfix/OpenDKIM，MX 收发尚未启用。完整公网收发需要按下文继续配置邮件服务、域名 DNS、TLS 证书与TCP25。服务器需访问 GitHub、GHCR；自动安装 Docker/工具时还需系统软件源。不再支持本地源码、固定源码包或离线镜像回退，拉取失败就停止，不使用缓存旧镜像。
+
+同一安装重复运行只启动原容器，保留原镜像、配置与数据，不执行升级；已有源码版安装也不会被自动转换。不同参数、同名外部容器或已有其他数据卷会拒绝覆盖。请保管安装目录中的配置、`.install-state` 版本记录以及数据卷备份。本脚本位于本项目的 `docker/install-primary.sh`，公共发布路径为 `ok-email-scripts/cloud-mail-primary/install-primary.sh`。
 
 ## 1. 准备服务器与域名
 
@@ -84,6 +86,33 @@ docker compose logs --tail=100 app mail
 ```
 
 首次构建会安装 Node.js 24、pnpm 11 和应用依赖，前端构建到 `mail-worker/dist`，Node 后端构建到 `mail-worker/server-dist`。运行容器使用非 root 的 `node` 用户，SQLite 与附件写入持久卷。MTA 使用独立容器并持久化邮件队列、DKIM 私钥和 Postfix 日志。容器默认使用 UTC，以统一每日配额和统计日期；网页会按浏览器本地时区显示时间。
+
+以上完整 MX Compose 流程仍可手工从源码构建应用和邮件容器。若应用改用 GitHub 发布的镜像，先拉取并查看仓库摘要：
+
+```sh
+docker pull ghcr.io/lsh-okok/cloud-mail:main
+docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' ghcr.io/lsh-okok/cloud-mail:main
+```
+
+把输出的官方 `ghcr.io/lsh-okok/cloud-mail@sha256:…` 完整摘要写入 `compose.registry.yml`，例如：
+
+```yaml
+services:
+  app:
+    image: ghcr.io/lsh-okok/cloud-mail@sha256:替换为刚拉取版本的64位摘要
+```
+
+邮件容器仍由本地 Compose 构建；以下命令在保留原卷、网络与配置的基础上使用指定应用镜像：
+
+```sh
+docker compose -f docker-compose.yml -f compose.registry.yml config --quiet
+docker compose -f docker-compose.yml -f compose.registry.yml build mail
+docker compose -f docker-compose.yml -f compose.registry.yml up -d --no-build
+docker compose -f docker-compose.yml -f compose.registry.yml ps
+```
+
+后续操作始终带上相同的覆盖文件。`--no-build` 必须保留：基础 Compose 仍含应用的 `build` 配置，不能对这个镜像覆盖组合运行 `up --build` 或 `build app`，否则会把本地源码重新构建到官方镜像标签下。切勿用本地构建覆盖 `:main`，也不要仅修改镜像标签就认定已更新。发布镜像的前端使用根路径；需要编译期站点子路径时继续使用上面的手工源码构建流程。
+
 
 在 NPM 新建 Proxy Host：
 
@@ -207,7 +236,7 @@ curl -fsS https://mail.example.com/api/health
 
 直接使用 Node 恢复 CLI 时，数据库旁会先写入 `<SQLITE_PATH>.restore-in-progress.json`。恢复成功或完整回滚后才删除此标记；中断或回滚失败时，应用启动、备份和再次恢复都会拒绝继续，避免自动创建空库或使用不匹配的附件。此时先停止 app 和 mail，保留标记及所有 `.pre-restore-*`、`.restore-*` 副本，根据标记记录的路径恢复一整套匹配的 SQLite 和 objects；核对完成后，才手动移除标记并重新启动。不要只删除标记后直接重试。`SQLITE_PATH` 必须位于 `OBJECTS_DIR` 外部。
 
-升级前先备份，然后运行：
+沿用手工源码构建的完整 MX 部署，升级前先备份，然后运行：
 
 ```sh
 git pull --ff-only
@@ -215,7 +244,9 @@ docker compose up -d --build
 docker compose ps
 ```
 
-不要运行 `docker compose down -v`，该命令会删除应用、队列、日志和 DKIM 持久卷。正常停止使用 `docker compose stop`，正常重建使用 `docker compose up -d --build`。
+使用 GHCR 覆盖文件的部署，升级前先保存旧镜像摘要及配置并完成一致性备份，再拉取新的 `main`、核对 GitHub 提交并更新 `compose.registry.yml` 中的摘要，运行 `docker compose -f docker-compose.yml -f compose.registry.yml up -d --no-build --no-deps app`。通过 `/health/ready` 与实际业务检查后才认为升级完成。回滚时使用保存的旧摘要重建应用；若版本改变了数据格式，需同时恢复该版本对应的数据库和附件备份，不能随意混用。单容器管理安装的升级需要按原环境配置、端口、标签与卷重建容器，安装脚本重复执行不负责升级。
+
+不要运行 `docker compose down -v`，该命令会删除应用、队列、日志和 DKIM 持久卷。正常停止使用 `docker compose stop`；手工源码部署重建使用 `docker compose up -d --build`，GHCR 部署使用上述带覆盖文件的 `--no-build` 命令。
 
 ## 7. 故障定位
 
@@ -230,7 +261,7 @@ docker compose ps
 | SMTP 返回 451 | app 健康状态、策略服务 10040、SQLite/磁盘可写性 |
 | 证书续期后仍旧 | 宿主机必须挂载整个 letsencrypt 目录，检查 mail maintenance 日志 |
 
-此仓库的 CI 构建并测试代码、验证 Compose/脚本，并运行真实容器收发件演练，不会自动发布到 Cloudflare 或服务器。真实 DNS、端口连通性、NPM 证书和外部邮件信誉只能在部署服务器及外部邮箱上验证。
+此仓库的 CI 构建并测试代码、验证 Compose/脚本，并运行真实容器收发件演练；`main` 检查通过后发布 GHCR 应用镜像，不会自动修改运行中的服务器。真实 DNS、端口连通性、NPM 证书和外部邮件信誉只能在部署服务器及外部邮箱上验证。
 
 ## 8. 隔离的 Docker 收发件演练
 
@@ -248,51 +279,24 @@ sh docker/smoke-test.sh
 
 ## 9. 只读节点一键部署
 
-主节点更新到此版本后，在「节点管理」点击「新增节点」，填写名称并生成安装命令。所有节点使用 GitHub 上同一份通用脚本：`https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-node/install-node.sh`。节点管理只为执行命令自动填写 `--primary-url`、`--install-token`、`--port`，受信局域网 HTTP 时额外添加 `--allow-insecure-http`，不再为每个节点复制一整套安装逻辑。
+主节点更新到此版本后，在「节点管理」点击「新增节点」，填写名称并生成安装命令。所有节点使用 GitHub 上同一份通用脚本：`https://raw.githubusercontent.com/lsh-okok/ok-email-scripts/main/cloud-mail-node/install-node.sh`。节点管理为执行命令自动填写 `--primary-url`、`--install-token`、`--port`，受信局域网 HTTP 时额外添加 `--allow-insecure-http`。
 
-复制页面的一键命令到目标 Linux 服务器执行即可。脚本凭短期安装令牌向主节点获取当前节点的独立配置、包摘要和镜像信息，再自动安装 Docker（支持的 apt/dnf 发行版）、下载并校验安装包、导入或构建镜像、建立独立数据卷并启动同步，无需修改脚本或另行准备 `node.env`、镜像文件。命令中使用短期安装令牌，不直接携带长期接入凭据。
+复制页面的一键命令到目标 Linux amd64（x86_64）服务器执行即可。脚本凭短期安装令牌向主节点获取独立接入配置，自动安装 Docker（支持的 apt/dnf 发行版），再从 GHCR 拉取 `ghcr.io/lsh-okok/cloud-mail:main`。脚本记录并验证仓库摘要、镜像 ID 与 GitHub 提交，按固定摘要建立独立数据卷并启动同步。主节点和副本采用同一应用镜像；副本保持只读角色，不增加 MX 邮件服务。无需另行准备 `node.env`、源码或镜像文件，命令不直接携带长期接入凭据。
 
-新增结果只显示一条完整的 `curl ... -o install-node.sh && sh install-node.sh ...` 命令和复制按钮，已包含下载、节点参数和执行步骤。下载失败时不会运行脚本，无需先手动下载。
+新增结果显示一条完整的 `curl ... -o install-node.sh && sh install-node.sh ...` 命令和复制按钮，已包含下载、节点参数和执行步骤。脚本下载失败时不会执行；镜像拉取失败时不会改用缓存、主节点离线镜像包或服务器源码构建。旧版 `NODE_DEPLOYMENT_IMAGE_DIR`、`node-deploy.tar.gz` 与 `/api/node-install/:token/bundle` 不再用于一键安装，升级主节点后需重新生成命令并使用最新通用脚本。
 
-目标服务器需有 curl、root/sudo 权限，并能访问 GitHub、主节点。源码构建方式还需访问 Docker 镜像源和 npm 依赖源。默认访问端口为3001；可在「部署设置」修改。主节点地址必须是目标容器可访问的域名或局域网 IP，保留站点子路径；不能填写 localhost、127.* 或0.0.0.0。受信局域网使用HTTP时，在页面明确勾选允许HTTP，公网使用HTTPS。
+目标服务器需有 curl、root/sudo 权限，并能访问 GitHub、GHCR 和主节点；自动安装 Docker/工具时还需可用的软件源，无需 npm。当前发布镜像仅支持 `linux/amd64`。默认访问端口为3001，可在「部署设置」修改。主节点地址必须是目标容器可访问的域名或局域网 IP，可包含站点子路径；不能填写 localhost、127.* 或0.0.0.0。受信局域网使用HTTP时，在页面明确勾选允许HTTP，公网使用HTTPS。
 
-安装参数有效1小时，主服务重启、节点停用/撤销或部署包更新后失效；在有效期内完成配置与安装包下载。GitHub 通用脚本本身不绑定节点或过期时间。已安装节点保留长期接入凭据，安装参数过期不影响运行。页面实时显示连接、同步和就绪；脚本等待就绪最多180秒，超时会提示排查并保留服务。有效期内再次执行同一命令会保留原密钥、配置和数据；尚未安装且参数失效时，撤销旧记录后重新创建。
+安装参数有效1小时，主服务重启、节点停用或撤销后失效；须在有效期内获取接入配置。GitHub 通用脚本本身不绑定节点或过期时间。已安装节点保留长期接入凭据，安装参数过期不影响运行。页面实时显示连接、同步和就绪；脚本等待就绪最多180秒，超时会提示排查并保留服务。有效期内再次执行同一命令只启动原节点，保留原镜像、密钥、配置和数据，不会随 `main` 更新而升级。端口、配置、镜像或数据卷冲突时停止并提示；尚未安装且参数失效时，撤销旧记录后重新创建。
 
-配置默认保存在执行用户的 `~/.cloud-mail/nodes/<节点ID>/node.env`（权限600），容器名为 `cloud-mail-node-<节点ID>`，卷名为同名加 `-data`。命令与脚本包含部署权限，请妥善保管。原手动配置仍可从创建结果的折叠项下载。
-
-后端 `pnpm --dir mail-worker run build` 会生成 `mail-worker/server-dist/node-deploy.tar.gz`，Docker构建也自动携带该包；安装包仅含构建所需源码白名单，不包含环境配置、数据库或部署密钥。未生成安装包时，页面会提示先构建并更新主节点。
-
-### 通过预构建镜像部署到离线节点
-
-目标服务器无法访问 Docker 镜像源或 npm 时，可以让主节点提供已构建的同版本应用镜像。先在有此镜像的 Docker 主机执行以下命令；输出目录的父目录须已存在，每个版本使用新的输出目录：
-
-```sh
-sudo sh docker/export-node-image.sh cloud-mail-app:release /srv/cloud-mail-node-release-20261114
-# 标准应用容器内 node 用户为 UID/GID 1000，须能读取只读挂载的文件。
-sudo chown -R 1000:1000 /srv/cloud-mail-node-release-20261114
-```
-
-将 `cloud-mail-app:release` 替换为本次构建的应用镜像。脚本生成 `node-image.tar.gz` 和 `node-image.json`，记录镜像 ID 与压缩包 SHA-256；输出目录权限为700、文件为600，已有目录不会被覆盖。它只导出镜像，不读取运行容器的环境配置或数据卷。镜像应通过本项目 Dockerfile 构建，并与主节点代码版本、目标服务器 CPU 架构匹配。
-
-将整个输出目录放到主节点宿主机，通过只读绑定挂载接入应用容器，并设置环境变量。例如在部署用的 Compose 覆盖文件中添加：
-
-```yaml
-services:
-  app:
-    environment:
-      NODE_DEPLOYMENT_IMAGE_DIR: /app/mail-worker/node-image-release
-    volumes:
-      - /srv/cloud-mail-node-release-20261114:/app/mail-worker/node-image-release:ro
-```
-
-重建主应用容器后，新生成的一键命令会优先从主节点下载此镜像包，校验完整性并导入指定镜像 ID，再启动节点。已有 Docker 及必要下载工具时，安装不再访问镜像源或 npm，也无需编译前后端。通用安装脚本仍需从 GitHub 下载一次，不能访问 GitHub 时可提前复制该公共脚本。配置此目录时应同时更新应用代码与镜像包，避免下发旧版本；不配置时继续使用源码构建方式。
+配置默认保存在执行用户的 `~/.cloud-mail/nodes/<节点ID>/node.env`（权限600），部署版本记录在同目录 `.install-state`，容器名为 `cloud-mail-node-<节点ID>`，卷名为同名加 `-data`。命令与配置包含部署权限，请妥善保管。原手动配置仍可从创建结果的折叠项下载。
 
 ### 已下载通用安装脚本时
 
-`docker/install-node.sh` 与 GitHub 发布的脚本相同，可长期保存并供所有节点复用。目标服务器无法访问 GitHub 时，可以先在其他电脑下载并复制过去，再使用新增命令中 `&&` 之后的执行部分。形式如下，实际参数须使用节点管理自动生成的值：
+`docker/install-node.sh` 与 GitHub 发布的脚本相同，可长期保存并供所有节点复用。目标服务器无法访问 GitHub 时，可先在其他电脑下载并复制过去，再使用新增命令中 `&&` 之后的执行部分。形式如下，实际参数须使用节点管理自动生成的值：
 
 ```sh
 sudo sh install-node.sh --primary-url 'https://mail.example.com' --install-token 'INSTALL_TOKEN_FROM_NODE_MANAGEMENT' --port 3001
 ```
 
-此方式只省去从 GitHub 下载脚本，仍须在安装参数有效期内访问主节点获取配置和安装包。脚本不会 source/eval 下载的配置。相同配置、端口和镜像版本可重复执行；冲突会停止并提示，不会自动覆盖已有部署。通过 `sudo sh` 执行时，配置默认保存在 `/root/.cloud-mail/nodes/<节点ID>/node.env`。
+此方式只省去从 GitHub 下载脚本，仍须访问 GHCR 拉取镜像，并在安装参数有效期内访问主节点获取配置。脚本不会 source/eval 下载的配置。通过 `sudo sh` 执行时，配置默认保存在 `/root/.cloud-mail/nodes/<节点ID>/node.env`。
