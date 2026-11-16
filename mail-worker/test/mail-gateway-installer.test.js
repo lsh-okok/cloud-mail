@@ -30,7 +30,7 @@ function fixture() {
   write('gateway.json',JSON.stringify([{Config:{Labels:{'cloud-mail.installation-id':instance,'cloud-mail.role':'mta'}},Mounts:[{Type:'volume',Name:'test-primary-mail-spool',Destination:'/var/spool/postfix'},{Type:'volume',Name:'test-primary-dkim',Destination:'/etc/opendkim/keys'},{Type:'volume',Name:'test-primary-mail-logs',Destination:'/var/log/postfix'}]}]));
   write('installed/primary.env',env.join('\n')+'\n');
   write('apply.mjs',`import fs from 'node:fs'; const root=process.argv[2], input=JSON.parse(fs.readFileSync(process.argv[3],'utf8')), url=process.argv[4]; if(url.includes('/networks/')) { const network=url.split('/networks/')[1].split('/')[0], app=JSON.parse(fs.readFileSync(root+'/app.json','utf8')); app[0].NetworkSettings.Networks[network]=input.EndpointConfig; fs.writeFileSync(root+'/app.json',JSON.stringify(app)); fs.appendFileSync(root+'/connect.jsonl',JSON.stringify({network,...input})+'\\n'); } else { fs.writeFileSync(root+'/payload.json',JSON.stringify(input)); const {HostConfig,NetworkingConfig,...Config}=input; fs.writeFileSync(root+'/app.json',JSON.stringify([{Config,HostConfig,Image:'${imageId}',Mounts:[{Type:'volume',Name:'test-primary-data',Destination:'/data'}],NetworkSettings:{Networks:NetworkingConfig.EndpointsConfig}}])); fs.writeFileSync(root+'/combined',''); }`);
-  write('networks.mjs',`import fs from 'node:fs'; const root=process.argv[2], mode=process.argv[3], name=process.argv[4], network=process.argv[5], path=root+(name==='test-primary-before-unified'?'/app-backup.json':'/app.json'), app=JSON.parse(fs.readFileSync(path,'utf8')); if(mode==='list') console.log(Object.keys(app[0].NetworkSettings.Networks).join('\\n')); else { delete app[0].NetworkSettings.Networks[network]; fs.writeFileSync(path,JSON.stringify(app)); }`);
+  write('networks.mjs',`import fs from 'node:fs'; const root=process.argv[2], mode=process.argv[3], name=process.argv[4], network=process.argv[5], path=root+(name==='test-primary-before-unified'?'/app-backup.json':'/app.json'), app=JSON.parse(fs.readFileSync(path,'utf8')); if(mode==='list') process.stdout.write(Object.keys(app[0].NetworkSettings.Networks).map(value=>value+'\\n').join('')+'\\n'); else { delete app[0].NetworkSettings.Networks[network]; fs.writeFileSync(path,JSON.stringify(app)); }`);
   const mock=(name,code)=>writeFileSync(join(root,'bin',name),`#!/bin/sh\nset -eu\n${code}`,{mode:0o755});
   mock('id',"printf '0\\n'"); mock('uname','case "${1:-}" in -m) printf x86_64 ;; *) printf Linux ;; esac');
   mock('ss','[ ! -f "$MAIL_ENABLE_TEST_ROOT/port-busy" ] || printf LISTEN'); mock('sleep','exit 0');
@@ -156,7 +156,7 @@ esac`);
 }
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 describe('single-container primary mail enablement',()=>{
-  it('rebuilds the app with its complete configuration, original networks, preserved data and unified health',()=>{
+  it('rebuilds the app and normalizes the Docker network list trailing blank line while preserving configuration',()=>{
     const f=fixture(), result=f.execute(); expect(result.error).toBeUndefined(); expect(result.status,result.stderr).toBe(0);
     const p=f.payload(); expect(p.Image).toBe(image); expect(p.Healthcheck.Test).toEqual(['CMD','/usr/local/bin/cloud-mail-healthcheck']);
     expect(p.Labels.custom).toBe('preserved'); expect(p.Labels['org.opencontainers.image.revision']).toBe(revision); expect(p.HostConfig.Memory).toBe(12345678); expect(p.HostConfig.LogConfig.Config['max-size']).toBe('10m');
@@ -169,6 +169,13 @@ describe('single-container primary mail enablement',()=>{
     expect(f.log()).toContain('pull ghcr.io/lsh-okok/cloud-mail:main'); expect(f.log()).not.toContain(':mta-main'); expect(f.log()).not.toContain('volume rm');
     expect(result.stdout).toContain(`内容：\n${txtContent}\n`); expect(result.stdout+result.stderr+f.log()).not.toContain('private-jwt-fixture');
     expect(result.stdout).toContain('统一容器：test-primary');
+    expect(f.log().match(/^network disconnect /gm)).toHaveLength(2);
+  });
+  it.each(['invalid name','empty'])('rejects an invalid Docker network list before modifying services: %s',value=>{
+    const f=fixture(), app=JSON.parse(f.read('app.json')); app[0].NetworkSettings.Networks=value==='empty'?{}:{[value]:{Aliases:[],IPAMConfig:null}}; f.write('app.json',JSON.stringify(app));
+    const result=f.execute(); expect(result.status).toBe(1);
+    expect(result.stderr).toContain(value==='empty'?'原容器没有可保留的网络配置':'原容器网络名称无效');
+    expect(f.log()).not.toMatch(/^(?:pull|run|stop|rm|rename|network disconnect) /m);
   });
   it('migrates an old app plus MTA while reusing its exact queue, DKIM and log volumes',()=>{
     const f=fixture(); f.mark('gateway-present'); const result=f.execute(); expect(result.status,result.stderr).toBe(0);

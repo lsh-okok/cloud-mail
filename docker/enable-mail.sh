@@ -282,7 +282,9 @@ if [[ $mail_existing == true ]]; then
   docker container inspect "$mail_gateway" > "$mail_temp/gateway.json"
   mail_old_gateway_running=$(docker container inspect --format '{{.State.Running}}' "$mail_gateway")
 else printf '[]' > "$mail_temp/gateway.json"; fi
-docker container inspect --format '{{range $name,$network := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$mail_app" > "$mail_temp/networks"
+# Docker appends its own newline after the template's final println.
+# Normalize empty records once so validation, disconnect and rollback share the list.
+docker container inspect --format '{{range $name,$network := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$mail_app" | sed '/^$/d' > "$mail_temp/networks"
 while IFS= read -r mail_network; do
   [[ $mail_network =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail '原容器网络名称无效。'
 done < "$mail_temp/networks"
