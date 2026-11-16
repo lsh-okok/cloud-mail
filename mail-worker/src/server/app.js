@@ -31,7 +31,7 @@ function createRoutes(env) {
       const path = c.req.path;
       const safeMethod = c.req.method === 'GET' || c.req.method === 'HEAD';
       const blocked = !safeMethod || (path.startsWith('/api/') && path !== '/api/health' && !path.startsWith('/api/mailboxes/')) ||
-        /^\/(?:admin|login|redeem|internal|oss|attachments|static)(?:\/|$)/.test(path);
+        /^\/(?:admin|login|redeem|orders|internal|oss|attachments|static)(?:\/|$)/.test(path);
       if (blocked) return c.json({ error: { code: 'REPLICA_READ_ONLY', message: 'This replica provides only public recipient reads.' } }, 403);
     }
     await next();
@@ -92,6 +92,16 @@ function createRoutes(env) {
   };
   app.get('/m/:token', recipientPage);
   app.get('/show/:platform/:publicId/:recipient', recipientPage);
+  const redemptionPage = async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    c.header('Referrer-Policy', 'no-referrer');
+    c.header('X-Frame-Options', 'DENY');
+    c.header('Content-Security-Policy', "frame-ancestors 'none'");
+    return serveStatic({ path: join(env.staticDir, 'index.html') })(c, next);
+  };
+  app.get('/redeem', redemptionPage);
+  app.get('/orders', redemptionPage);
   app.use('*', serveStatic({ root: env.staticDir }));
   // Missing asset requests must not receive the SPA HTML with a successful status.
   app.get('*', async (c, next) => {

@@ -89,11 +89,7 @@ export function publicFeatureRequest(path, options = {}) {
   return send(path, { ...options, admin: false })
 }
 
-export async function downloadFeatureExport(path, query, { filename = `recipient-links-${Date.now()}.txt` } = {}) {
-  const token = localStorage.getItem('token') || ''
-  const response = await fetch(endpoint(path, query), {
-    headers: { Authorization: token }, credentials: 'omit', cache: 'no-store',
-  })
+async function saveFeatureDownload(response, filename) {
   if (!response.ok) {
     const payload = await response.json().catch(() => null)
     throw new FeatureRequestError(response, payload)
@@ -117,6 +113,33 @@ export async function downloadFeatureExport(path, query, { filename = `recipient
   link.download = String(serverName || filename).replace(/[\\/\u0000-\u001f]/g, '_')
   document.body.appendChild(link); link.click(); link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export async function downloadFeatureExport(path, query, { filename = `recipient-links-${Date.now()}.txt` } = {}) {
+  const token = localStorage.getItem('token') || ''
+  const response = await fetch(endpoint(path, query), {
+    headers: { Authorization: token }, credentials: 'omit', cache: 'no-store',
+  })
+  await saveFeatureDownload(response, filename)
+}
+
+export async function downloadFeatureFile(path, data, { admin = true, signal, filename = `mailbox-delivery-${Date.now()}.txt` } = {}) {
+  const token = admin ? localStorage.getItem('token') || '' : ''
+  async function request(csrf) {
+    const headers = { Accept: 'application/octet-stream, application/json', 'Content-Type': 'application/json' }
+    if (admin && token) headers.Authorization = token
+    if (csrf) headers['X-CSRF-Token'] = csrf
+    return fetch(endpoint(path), { method: 'POST', headers, credentials: 'omit', cache: 'no-store', signal, body: JSON.stringify(data || {}) })
+  }
+  let response = await request(admin ? await getCsrf(token) : undefined)
+  if (admin && response.status === 403) {
+    const payload = await response.clone().json().catch(() => null)
+    if (/csrf/i.test(payload?.error?.code || '')) {
+      csrfToken = ''
+      response = await request(await getCsrf(token))
+    }
+  }
+  await saveFeatureDownload(response, filename)
 }
 
 export function createRequestKey() {

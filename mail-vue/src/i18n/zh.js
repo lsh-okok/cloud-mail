@@ -13,6 +13,7 @@ const zh = {
     sourceMailboxes: '主邮箱管理',
     mailDomains: '邮箱域名',
     recipientLinks: '子邮箱收件链接',
+    mailboxCards: '邮箱卡密管理',
     mailVerification: '邮箱验证',
     nodeManagement: '节点管理',
     noMoreData: '没有更多数据了',

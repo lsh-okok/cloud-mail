@@ -13,6 +13,7 @@ const en = {
     sourceMailboxes: 'Source Mailboxes',
     mailDomains: 'Email Domains',
     recipientLinks: 'Recipient Links',
+    mailboxCards: 'Mailbox Redemption Codes',
     mailVerification: 'Mail Verification',
     nodeManagement: 'Node Management',
     noMoreData: 'No more data',

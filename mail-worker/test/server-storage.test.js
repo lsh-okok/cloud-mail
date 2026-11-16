@@ -102,6 +102,7 @@ describe('SQLite persistence and migrations', () => {
     { version: 6, name: 'persistent-site-administrators' },
     { version: 7, name: 'remove-registration-key-permissions' },
     { version: 8, name: 'reported-node-public-ip' },
+    { version: 9, name: 'mailbox-cards-and-redemption-orders' },
   ]);
 		expect(await createKV(db).get('session', 'json')).toEqual({ userId: 42 });
 		expect(db.pragma('journal_mode', { simple: true })).toBe('wal');

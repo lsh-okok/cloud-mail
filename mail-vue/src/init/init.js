@@ -26,7 +26,7 @@ export async function init() {
 
     const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
     const currentPath = window.location.pathname.slice(basePath.length)
-    if (/^\/(m|show)\//.test(currentPath)) {
+    if (/^\/(m|show)\//.test(currentPath) || /^\/(redeem|orders)\/?$/.test(currentPath)) {
         // A saved or expired management token must never redirect a public link to login.
         try {
             const setting = await publicFeatureRequest('/setting/websiteConfig')

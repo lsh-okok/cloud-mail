@@ -38,6 +38,8 @@ GitHub Actions 在 `main` 检查通过后发布 `ghcr.io/lsh-okok/cloud-mail:mai
 
 邮箱后缀可在管理员后台的「邮箱域名」中新增、设为默认或停止创建，保存立即生效，无需修改代码或重建应用。现有账号与邮箱地址保持不变；公网收发仍需配置 DNS 和邮件服务，详见[邮箱域名管理](doc/mail-domains.md)。
 
+管理员可在「邮箱卡密」按主邮箱生成、停用和重新生成兑换码。公开兑换页 `/redeem` 支持一次性批量核销，单码交付 TXT，批量按主邮箱分文件 ZIP 打包；`/orders` 可凭订单查询凭证重新下载原结果。兑换码默认长期有效，链接沿用原有效期，详见[卡密与订单说明](doc/mailbox-cards-implementation.md)。
+
 ## 项目展示
 
 | ![](/doc/demo/demo.jpg)  | ![](/doc/demo/demo1.jpg) |

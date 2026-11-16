@@ -33,12 +33,18 @@ function csrfToken(jwt, secret) {
   return createHmac('sha256', secret).update('cloud-mail-admin-csrf-v1\0').update(jwt).digest('base64url');
 }
 
-function validateBrowserOrigin(c) {
+export function validateBrowserOrigin(c, { publicSite = false } = {}) {
   const origin = c.req.header('origin');
   if (origin) {
     let expected;
-    try { expected = new URL(c.env.app_url).origin; } catch { throw new FeatureError(503, 'ORIGIN_UNAVAILABLE', 'The public site origin is not configured.'); }
-    if (origin !== expected) throw new FeatureError(403, 'CROSS_SITE_REQUEST', 'This operation must be submitted from the configured site.');
+    try { expected = new Set([new URL(c.env.app_url).origin]); } catch { throw new FeatureError(503, 'ORIGIN_UNAVAILABLE', 'The public site origin is not configured.'); }
+    if (publicSite) {
+      const configured = c.env.db.prepare('SELECT public_base_url FROM feature_settings WHERE id=1').get()?.public_base_url || c.env.public_base_url;
+      if (configured) {
+        try { expected.add(new URL(configured).origin); } catch { throw new FeatureError(503, 'ORIGIN_UNAVAILABLE', 'The public site origin is not configured.'); }
+      }
+    }
+    if (!expected.has(origin)) throw new FeatureError(403, 'CROSS_SITE_REQUEST', 'This operation must be submitted from the configured site.');
   }
   const site = c.req.header('sec-fetch-site');
   if (site && site !== 'same-origin' && site !== 'none') {

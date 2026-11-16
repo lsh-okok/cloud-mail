@@ -57,6 +57,12 @@ const routers = {
             meta: { title: 'recipientLinks', name: 'links', menu: true }
         },
         {
+            path: '/admin/cards',
+            name: 'cards',
+            component: () => import('@/views/cards/index.vue'),
+            meta: { title: 'mailboxCards', name: 'cards', menu: true }
+        },
+        {
             path: '/admin/verification',
             name: 'verification',
             component: () => import('@/views/verification/index.vue'),

@@ -64,6 +64,18 @@ const routes = [
         component: () => import('@/views/login/index.vue')
     },
     {
+        path: '/redeem',
+        name: 'redeem',
+        component: () => import('@/views/redeem/index.vue'),
+        meta: { public: true }
+    },
+    {
+        path: '/orders',
+        name: 'redemption-order-query',
+        component: () => import('@/views/redeem/index.vue'),
+        meta: { public: true }
+    },
+    {
         path: '/m/:token',
         name: 'public-mail-token',
         component: () => import('@/views/public-mail/index.vue'),

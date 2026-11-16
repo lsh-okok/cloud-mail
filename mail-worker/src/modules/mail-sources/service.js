@@ -88,6 +88,12 @@ function persistSourceMailbox(env, value, { id = randomUUID(), current = null, a
     return env.db.transaction(() => {
       const now = Date.now();
       if (current) {
+        const identityChanged = value.email !== current.email || value.localAccountId !== current.local_account_id ||
+          value.mxDomain !== current.mx_domain;
+        if (identityChanged && env.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_card'").get() &&
+            env.db.prepare('SELECT 1 FROM mailbox_card WHERE mailbox_id=? LIMIT 1').get(id)) {
+          throw new FeatureError(409, 'MAILBOX_CARD_BOUND', '该主邮箱已有兑换码记录，不能更换邮箱身份或收件范围。');
+        }
         const update = env.db.prepare(`UPDATE source_mailbox SET email=?,enabled=?,local_account_id=?,mx_domain=?,
           revision=revision+1,generation=generation+1,updated_at=? WHERE id=? AND revision=?`).run(
           value.email, Number(value.enabled), value.localAccountId, value.mxDomain, now, id, current.revision);

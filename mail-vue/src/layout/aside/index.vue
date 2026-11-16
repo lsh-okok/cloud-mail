@@ -53,6 +53,11 @@
           <Icon icon="fluent:link-24-regular" width="22" height="22" />
           <span class="menu-name" style="margin-left: 15px">{{$t('recipientLinks')}}</span>
         </el-menu-item>
+        <el-menu-item @click="router.push({name: 'cards'})" index="cards" v-perm="'*'"
+                      :class="route.meta.name === 'cards' ? 'choose-item' : ''">
+          <Icon icon="fluent:ticket-diagonal-24-regular" width="22" height="22" />
+          <span class="menu-name" style="margin-left: 15px">{{$t('mailboxCards')}}</span>
+        </el-menu-item>
         <el-menu-item @click="router.push({name: 'verification'})" index="verification" v-perm="'*'"
                       :class="route.meta.name === 'verification' ? 'choose-item' : ''">
           <Icon icon="fluent:mail-checkmark-24-regular" width="22" height="22" />

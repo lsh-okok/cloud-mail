@@ -10,6 +10,7 @@ import { VERIFICATION_SCHEMA } from '../modules/verification/schema.js';
 import { NODE_SCHEMA, NODE_PUBLIC_IP_SCHEMA } from '../modules/nodes/schema.js';
 import { DOMAIN_SCHEMA } from '../modules/domains/schema.js';
 import { ADMINISTRATOR_SCHEMA } from '../modules/administrators/schema.js';
+import { CARD_SCHEMA } from '../modules/cards/schema.js';
 
 const migrations = [
 	{
@@ -82,6 +83,13 @@ const migrations = [
 		name: 'reported-node-public-ip',
 		up(db) {
 			db.exec(NODE_PUBLIC_IP_SCHEMA);
+		}
+	},
+	{
+		version: 9,
+		name: 'mailbox-cards-and-redemption-orders',
+		up(db) {
+			db.exec(CARD_SCHEMA);
 		}
 	}
 ];
