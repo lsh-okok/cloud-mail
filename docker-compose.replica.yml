@@ -7,6 +7,7 @@ services:
     environment:
       NODE_ENV: production
       NODE_ROLE: replica
+      MAIL_ENABLED: "false"
       NODE_PRIMARY_URL: ${NODE_PRIMARY_URL:?Set NODE_PRIMARY_URL}
       NODE_ID: ${NODE_ID:?Set NODE_ID}
       NODE_CREDENTIAL: ${NODE_CREDENTIAL:?Set NODE_CREDENTIAL}

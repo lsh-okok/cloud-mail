@@ -20,20 +20,30 @@ RUN pnpm --dir mail-worker run build \
 FROM node:24-bookworm-slim AS runtime
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/lsh-okok/cloud-mail" \
-    org.opencontainers.image.revision=$VCS_REF
+    org.opencontainers.image.revision=$VCS_REF \
+    io.cloud-mail.component=combined \
+    io.cloud-mail.mail-capable=true
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gosu tini \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates gosu tini postfix opendkim opendkim-tools openssl supervisor netcat-openbsd procps \
+    && find /var/spool/postfix -mindepth 1 -delete \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/data \
-    SQLITE_PATH=/data/cloud-mail.sqlite OBJECTS_DIR=/data/objects
+    SQLITE_PATH=/data/cloud-mail.sqlite OBJECTS_DIR=/data/objects MAIL_ENABLED=false
 WORKDIR /app
 COPY --from=build /app/mail-worker/server-dist ./mail-worker/server-dist
 COPY --from=build /app/mail-worker/node_modules ./mail-worker/node_modules
 COPY --from=build /app/mail-worker/dist ./mail-worker/dist
 COPY docker/app-entrypoint.sh /usr/local/bin/cloud-mail-entrypoint
-RUN chmod 755 /usr/local/bin/cloud-mail-entrypoint
-EXPOSE 3000 2525 10040 10041
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+(process.env.APP_BASE_PATH||'').replace(/\/$/,'')+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+COPY docker/healthcheck.sh /usr/local/bin/cloud-mail-healthcheck
+COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
+COPY docker/supervisor-events.py /usr/local/bin/cloud-mail-supervisor-events
+COPY docker/mail/entrypoint.sh /usr/local/bin/mail-entrypoint
+COPY docker/mail/healthcheck.sh /usr/local/bin/mail-healthcheck
+COPY docker/mail/maintenance.sh /usr/local/bin/mail-maintenance
+RUN chmod 755 /usr/local/bin/cloud-mail-* /usr/local/bin/mail-*
+EXPOSE 3000 25
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/cloud-mail-healthcheck"]
 ENTRYPOINT ["tini", "--", "/usr/local/bin/cloud-mail-entrypoint"]
 CMD ["node", "mail-worker/server-dist/index.cjs"]

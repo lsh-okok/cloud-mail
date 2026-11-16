@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +53,8 @@ case "$1" in
       *) exit 98 ;;
     esac ;;
   container)
+    if [ "\${3:-}" = --format ]; then container=$5; else container=$3; fi
+    if [ "$container" = installer-test-mail ]; then [ -f "$PRIMARY_INSTALL_TEST_ROOT/gateway-present" ]; exit; fi
     [ -f "$PRIMARY_INSTALL_TEST_ROOT/container-present" ] || exit 1
     if [ "\${3:-}" = --format ]; then
       case "$4" in
@@ -69,6 +72,9 @@ case "$1" in
   volume)
     case "$2" in
       inspect)
+        if [ "\${3:-}" != --format ]; then
+          case "$3" in installer-test-mail-spool|installer-test-dkim|installer-test-mail-logs) [ -f "$PRIMARY_INSTALL_TEST_ROOT/mail-volume-present" ]; exit ;; esac
+        fi
         [ -f "$PRIMARY_INSTALL_TEST_ROOT/volume-present" ] || exit 1
         if [ "\${3:-}" = --format ]; then
           if [ -f "$PRIMARY_INSTALL_TEST_ROOT/wrong-volume-identity" ]; then printf replaced-volume; else cat "$PRIMARY_INSTALL_TEST_ROOT/volume-id"; fi
@@ -126,6 +132,7 @@ describe('primary node installer', () => {
     expect(first.status, first.stderr).toBe(0);
     const env = f.env(), before = f.config();
     expect(env.NODE_ROLE).toBe('primary');
+    expect(env.MAIL_ENABLED).toBe('false');
     expect(env.APP_URL).toBe('http://203.0.113.10:13010');
     expect(env.ADMIN_EMAIL).toBe('admin@cloudmail.test');
     expect(env.JWT_SECRET).toMatch(/^[0-9a-f]{64}$/);
@@ -152,6 +159,25 @@ describe('primary node installer', () => {
     expect(f.log().match(/^run /gm)).toHaveLength(1);
     expect(f.log()).toContain('start installer-test');
     expect(existsSync(join(f.root, 'unexpected.log'))).toBe(false);
+  });
+
+  it('restarts a combined primary with its recorded environment and full service health', () => {
+    const f=fixture(); expect(f.execute().status).toBe(0);
+    const mailEnv='NODE_ROLE=primary\nMAIL_ENABLED=true\n';
+    writeFileSync(join(f.root,'installed','mail.env'),mailEnv);
+    writeFileSync(join(f.root,'installed','.install-state'),f.state().replace('FORMAT=2','FORMAT=3')+`MAIL_ENV_SHA256=${createHash('sha256').update(mailEnv).digest('hex')}\n`);
+    const before=f.log(), result=f.execute(); expect(result.status,result.stderr).toBe(0);
+    expect(f.log().slice(before.length)).toContain('exec installer-test /usr/local/bin/cloud-mail-healthcheck');
+    expect(f.log().slice(before.length)).not.toMatch(/^(?:pull|run|stop|rm) /m);
+    writeFileSync(join(f.root,'installed','mail.env'),mailEnv+'CHANGED=true\n');
+    const mismatch=f.execute(); expect(mismatch.status).toBe(1); expect(mismatch.stderr).toContain('邮件运行配置与安装记录不一致');
+  });
+
+  it.each(['combined','gateway-present','mail-volume-present'])('refuses a partial reinstall of mail resources: %s', marker => {
+    const f=fixture(); expect(f.execute().status).toBe(0);
+    if(marker==='combined')writeFileSync(join(f.root,'installed','.install-state'),f.state().replace('FORMAT=2','FORMAT=3')); else f.mark(marker);
+    const before=f.log(), state=f.state(), config=f.config(), result=f.execute(['--reinstall']); expect(result.status).toBe(1);
+    expect(f.state()).toBe(state); expect(f.config()).toBe(config); expect(f.log().slice(before.length)).not.toMatch(/^(?:pull|run|stop|rm|volume rm|volume create) /m);
   });
 
   it.each([imageDigest, `ghcr.io/lsh-okok/cloud-mail:sha-${revision}`])('pulls an explicitly pinned official version: %s', image => {

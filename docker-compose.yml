@@ -8,6 +8,7 @@ services:
         APP_BASE_PATH: ${APP_BASE_PATH:-}
     restart: unless-stopped
     init: false
+    hostname: ${MAIL_HOST:?Set MAIL_HOST in .env}
     environment:
       NODE_ENV: production
       TZ: ${TZ:-UTC}
@@ -20,9 +21,9 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       VERIFICATION_SMTP_ALLOW_CIDRS: ${VERIFICATION_SMTP_ALLOW_CIDRS:-}
       NODE_ROLE: primary
+      MAIL_ENABLED: "true"
       MAIL_HOST: ${MAIL_HOST:?Set MAIL_HOST in .env}
       MAIL_DOMAINS: ${MAIL_DOMAINS:?Set MAIL_DOMAINS in .env}
-      MAIL_NETWORK_SUBNET: ${MAIL_NETWORK_SUBNET:-172.30.89.0/24}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
@@ -34,51 +35,21 @@ services:
       LMTP_PORT: "2525"
       POLICY_PORT: "10040"
       DOMAIN_MAP_PORT: "10041"
-      SMTP_HOST: mail
+      SMTP_HOST: 127.0.0.1
       SMTP_PORT: "587"
       SMTP_SECURE: "false"
       SMTP_REQUIRE_TLS: "false"
       MAX_MESSAGE_BYTES: ${MAX_MESSAGE_BYTES:-26214400}
       MAIL_LOG_PATH: /var/log/postfix/postfix.log
-    volumes:
-      - app_data:/data
-      - mail_logs:/var/log/postfix:ro
-    expose:
-      - "3000"
-      - "2525"
-      - "10040"
-      - "10041"
-    networks:
-      mail_internal:
-      npm:
-        aliases:
-          - cloud-mail-app
-    stop_grace_period: 30s
-    security_opt:
-      - no-new-privileges:true
-
-  mail:
-    image: cloud-mail-mta:local
-    build:
-      context: ./docker/mail
-    restart: unless-stopped
-    hostname: ${MAIL_HOST:?Set MAIL_HOST in .env}
-    environment:
-      TZ: ${TZ:-UTC}
-      MAIL_HOST: ${MAIL_HOST:?Set MAIL_HOST in .env}
-      MAIL_DOMAINS: ${MAIL_DOMAINS:?Set MAIL_DOMAINS in .env}
-      MAIL_NETWORK_SUBNET: ${MAIL_NETWORK_SUBNET:-172.30.89.0/24}
       DKIM_SELECTOR: ${DKIM_SELECTOR:-mail}
       SMTP_TLS_CERT_FILE: ${SMTP_TLS_CERT_FILE:?Set SMTP_TLS_CERT_FILE in .env}
       SMTP_TLS_KEY_FILE: ${SMTP_TLS_KEY_FILE:?Set SMTP_TLS_KEY_FILE in .env}
-      MAX_MESSAGE_BYTES: ${MAX_MESSAGE_BYTES:-26214400}
       MAIL_LOG_MAX_BYTES: ${MAIL_LOG_MAX_BYTES:-104857600}
       MAIL_LOG_KEEP: ${MAIL_LOG_KEEP:-7}
     ports:
       - "${SMTP_BIND_ADDRESS:-0.0.0.0}:25:25"
-    expose:
-      - "587"
     volumes:
+      - app_data:/data
       - mail_spool:/var/spool/postfix
       - mail_logs:/var/log/postfix
       - dkim_keys:/etc/opendkim/keys
@@ -88,18 +59,16 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    expose:
+      - "3000"
     networks:
-      - mail_internal
-    depends_on:
-      app:
-        condition: service_healthy
-    stop_grace_period: 60s
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/mail-healthcheck"]
-      interval: 30s
-      timeout: 10s
-      start_period: 30s
-      retries: 3
+      mail_internal:
+      npm:
+        aliases:
+          - cloud-mail-app
+    stop_grace_period: 120s
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   mail_internal:

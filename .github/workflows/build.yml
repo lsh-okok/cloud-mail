@@ -35,6 +35,7 @@ jobs:
           for script in docker/*.sh docker/mail/*.sh; do
             if head -n 1 "$script" | grep -q bash; then bash -n "$script"; else sh -n "$script"; fi
           done
+          python3 -m py_compile docker/supervisor-events.py
           docker compose --env-file .env.example config --quiet
       - name: Exercise Docker mail stack
         run: sh docker/smoke-test.sh
@@ -68,9 +69,6 @@ jobs:
           if digest=$(docker buildx imagetools inspect "$image:sha-$GITHUB_SHA" --format '{{.Manifest.Digest}}' 2>/dev/null); then
             echo "digest=$digest" >> "$GITHUB_OUTPUT"
           fi
-          if digest=$(docker buildx imagetools inspect "$image:mta-sha-$GITHUB_SHA" --format '{{.Manifest.Digest}}' 2>/dev/null); then
-            echo "mail_digest=$digest" >> "$GITHUB_OUTPUT"
-          fi
       - name: Build and publish tested commit
         id: image
         if: steps.ref.outputs.digest == ''
@@ -86,32 +84,20 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build and publish tested mail service
-        id: mail_image
-        if: steps.ref.outputs.mail_digest == ''
-        uses: docker/build-push-action@v6
-        with:
-          context: ./docker/mail
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.ref.outputs.image }}:mta-sha-${{ github.sha }}
-          build-args: |
-            VCS_REF=${{ github.sha }}
-          cache-from: type=gha,scope=mail
-          cache-to: type=gha,mode=max,scope=mail
+      - name: Exercise combined one-click installation
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+        run: sudo bash docker/installer-smoke.sh "$IMAGE:sha-$GITHUB_SHA"
       - name: Promote current main and latest and record digest
         env:
           IMAGE: ${{ steps.ref.outputs.image }}
           IMAGE_DIGEST: ${{ steps.ref.outputs.digest || steps.image.outputs.digest }}
-          MAIL_IMAGE_DIGEST: ${{ steps.ref.outputs.mail_digest || steps.mail_image.outputs.digest }}
         run: |
           set -eu
           main_sha=$(git ls-remote origin refs/heads/main | cut -f1)
           if [ "$main_sha" = "$GITHUB_SHA" ]; then
             docker buildx imagetools create --tag "$IMAGE:main" --tag "$IMAGE:latest" "$IMAGE@$IMAGE_DIGEST"
-            docker buildx imagetools create --tag "$IMAGE:mta-main" --tag "$IMAGE:mta-latest" "$IMAGE@$MAIL_IMAGE_DIGEST"
             echo "Published main and latest: $IMAGE@$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
-            echo "Published mta-main and mta-latest: $IMAGE@$MAIL_IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Skipped main and latest promotion: a newer main commit exists." >> "$GITHUB_STEP_SUMMARY"
           fi

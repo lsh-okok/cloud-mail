@@ -23,7 +23,7 @@ cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
     if [ "$compose_ready" = 1 ]; then
-        if [ "$status" -ne 0 ]; then dc logs --no-color --tail=200 app mail >&2 || true; fi
+        if [ "$status" -ne 0 ]; then dc logs --no-color --tail=200 app >&2 || true; fi
         if [ -d "$smoke_tmp/backup" ]; then
             # The backup CLI runs as container root; return ownership of this
             # invocation's temporary bind mount so a non-root CI user can remove it.
@@ -63,6 +63,7 @@ export NPM_NETWORK="$npm_network" NPM_CERT_ROOT="$smoke_tmp/certs"
 export SMTP_TLS_CERT_FILE=/certs/live/smoke/fullchain.pem SMTP_TLS_KEY_FILE=/certs/live/smoke/privkey.pem
 export MAIL_NETWORK_SUBNET="$mail_subnet" DKIM_SELECTOR=mail MAX_MESSAGE_BYTES=26214400 TZ=UTC
 export SMTP_BIND_ADDRESS=127.0.0.1 MAIL_LOG_MAX_BYTES=104857600 MAIL_LOG_KEEP=7
+export MAIL_ENABLED=true MAIL_INTERNAL_HOST=127.0.0.1
 cat > "$smoke_tmp/smoke.env" <<EOF
 COMPOSE_PROJECT_NAME=$smoke_id
 APP_URL=https://web.smoke.example
@@ -76,6 +77,8 @@ NPM_CERT_ROOT=$smoke_tmp/certs
 SMTP_TLS_CERT_FILE=/certs/live/smoke/fullchain.pem
 SMTP_TLS_KEY_FILE=/certs/live/smoke/privkey.pem
 MAIL_NETWORK_SUBNET=$mail_subnet
+MAIL_ENABLED=true
+MAIL_INTERNAL_HOST=127.0.0.1
 DKIM_SELECTOR=mail
 MAX_MESSAGE_BYTES=26214400
 TZ=UTC
@@ -84,20 +87,19 @@ cat > "$smoke_tmp/override.yml" <<EOF
 services:
   app:
     image: cloud-mail-app:$smoke_id
+    ports: !reset []
     volumes:
       - type: bind
         source: $smoke_tmp
         target: /smoke
         read_only: true
-  mail:
-    image: cloud-mail-mta:$smoke_id
-    ports: !reset []
 networks:
   mail_internal: !override
     external: true
     name: $mail_network
 EOF
 dc config --quiet
+test "$(dc config --services)" = app || { echo 'The mail stack must use one combined app service' >&2; exit 1; }
 compose_ready=1
 dc build
 dc up -d
@@ -142,10 +144,10 @@ wait_probe() {
     done
     probe "$mode"
 }
-queue_has() { dc exec -T mail postqueue -j | grep -F "$1" >/dev/null; }
+queue_has() { dc exec -T app postqueue -j | grep -F "$1" >/dev/null; }
 wait_healthy app
-wait_healthy mail
 probe health
+probe combined-runtime
 probe tls
 probe relay
 probe unknown
@@ -176,7 +178,7 @@ attempts=0
 renewed=0
 while [ "$attempts" -lt 45 ]; do
     if probe tls >/dev/null 2>&1 \
-        && dc logs --no-color --tail=100 mail 2>&1 | grep -F 'Reloaded Postfix after an NPM certificate change' >/dev/null; then
+        && dc logs --no-color --tail=100 app 2>&1 | grep -F 'Reloaded Postfix after an NPM certificate change' >/dev/null; then
         renewed=1
         break
     fi
@@ -196,42 +198,49 @@ echo 'SMTP policy, LMTP, SQLite and attachment metadata/download passed'
 # Postfix reports terminal recipient outcomes and the app releases that copy.
 dc exec -d app node /smoke/probe.cjs sink
 wait_probe sink-ready
-dc exec -T mail postconf -e 'relayhost = [app]:2526'
-dc exec -T mail postconf -e 'defer_transports = smtp'
-dc exec -T mail postfix reload
+dc exec -T app postconf -e 'relayhost = [127.0.0.1]:2526'
+dc exec -T app postconf -e 'defer_transports = smtp'
+dc exec -T app postfix reload
 sleep 2
 probe api-send "smoke-outbound-$smoke_id"
-dc exec -T mail postconf -e 'defer_transports ='
-dc exec -T mail postfix reload
-dc exec -T mail postqueue -f
+dc exec -T app postconf -e 'defer_transports ='
+dc exec -T app postfix reload
+dc exec -T app postqueue -f
 wait_probe outbound-initial
 probe sink-release
-dc exec -T mail postqueue -f
+dc exec -T app postqueue -f
 wait_probe outbound-final
 echo 'API outbox, DKIM, Bcc privacy and per-recipient SMTP delivery states passed'
 
 # Accept mail into Postfix while the app is healthy but postpone LMTP delivery.
-dc exec -T mail postconf -e 'defer_transports = lmtp'
-dc exec -T mail postfix reload
+dc exec -T app postconf -e 'defer_transports = lmtp'
+dc exec -T app postfix reload
 sleep 2
 queued_subject="smoke-queued-$smoke_id"
 queue_id=$(probe submission "$queued_subject")
 queue_has "$queue_id"
 probe absent "$queued_subject"
-dc exec -T mail postcat -q "$queue_id" | grep -F 'DKIM-Signature:' >/dev/null
+dc exec -T app postcat -q "$queue_id" | grep -F 'DKIM-Signature:' >/dev/null
 echo 'Internal SMTP submission produced a DKIM signature'
-dc stop -t 20 app
-# The public listener must defer new local RCPTs while policy lookup is down.
-dc run --rm --no-deps -T --entrypoint node app /smoke/probe.cjs unavailable
-# Recreate the MTA, proving its accepted queue is in the persistent volume.
-dc up -d --no-deps --force-recreate mail
-wait_healthy mail
-queue_has "$queue_id"
-dc start app
+# Stop only the supervised Node program. The same container's public SMTP
+# listener must temporarily refuse local recipients while its policy is down.
+dc exec -T app supervisorctl stop app
+probe unavailable
+dc exec -T app supervisorctl start app
 wait_healthy app
-dc exec -T mail postqueue -f
+queue_has "$queue_id"
+dkim_before=$(dc exec -T app sha256sum /etc/opendkim/keys/smoke.example/mail.private)
+# Stop every process, then inspect the original accepted message without an
+# active Postfix daemon. Recreating the one container must preserve its queue.
+dc stop app
+dc run --rm --no-deps -T --entrypoint postcat app -q "$queue_id" | grep -F "$queued_subject" >/dev/null
+dc up -d --no-deps --force-recreate app
+wait_healthy app
+test "$(dc exec -T app sha256sum /etc/opendkim/keys/smoke.example/mail.private)" = "$dkim_before"
+probe combined-runtime
+dc exec -T app postqueue -f
 wait_stored "$queued_subject"
-echo 'Accepted Postfix queue survived app downtime and MTA recreation'
+echo 'Accepted queue and DKIM key survived combined-container recreation; Node downtime deferred SMTP'
 
 dc restart app
 wait_healthy app
@@ -241,7 +250,7 @@ echo 'SQLite messages survived app restart without duplicate delivery'
 
 # Exercise the same backup mount shape as backup.sh: CLI creates the absent
 # /backup/app child, then restores it into a separate, newly-created data volume.
-dc stop mail app
+dc stop app
 mkdir -p "$smoke_tmp/backup"
 dc run --rm --no-deps -T --entrypoint node -v "$smoke_tmp/backup:/backup" app \
     mail-worker/server-dist/cli.cjs backup /backup/app

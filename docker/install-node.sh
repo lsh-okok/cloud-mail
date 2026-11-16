@@ -276,7 +276,7 @@ else
     --label "cloud-mail.image-digest=$node_image_digest" --label "cloud-mail.env-sha256=$node_env_checksum" \
     --restart unless-stopped --security-opt no-new-privileges:true \
     --env-file "$node_install_root/node.env" \
-    -e NODE_ROLE=replica -e PORT=3000 -e DATA_DIR=/data \
+    -e NODE_ROLE=replica -e MAIL_ENABLED=false -e PORT=3000 -e DATA_DIR=/data \
     -e SQLITE_PATH=/data/cloud-mail.sqlite -e OBJECTS_DIR=/data/objects \
     -e STATIC_DIR=/app/mail-worker/dist -e APP_BASE_PATH= \
     -e "APP_URL=http://localhost:$node_port" \

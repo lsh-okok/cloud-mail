@@ -30,11 +30,11 @@
 
 ## 项目简介
 
-使用自己的域名创建多个邮箱。此分支默认在 Linux 服务器通过 Docker Compose 运行：Node.js 提供网页和 API，SQLite 保存数据，本地持久卷保存附件，Postfix/OpenDKIM 接收和直接投递邮件。网页 HTTPS 接入已有 Nginx Proxy Manager，并只读使用其证书；不需要 Cloudflare Workers、D1、KV、R2 或 Resend。
+使用自己的域名创建多个邮箱。此分支在 Linux 服务器通过 Docker 运行：同一个镜像、同一个容器内，Node.js 提供网页和 API，Postfix/OpenDKIM 接收和直接投递邮件；SQLite、附件、邮件队列、日志与 DKIM 密钥保存在持久卷。网页 HTTPS 接入已有 Nginx Proxy Manager，并只读使用其证书；不需要 Cloudflare Workers、D1、KV、R2 或 Resend。
 
 **部署入口：[Linux 服务器部署](doc/server-deployment.md)**。从 `.env.example` 创建 `.env`，配置域名、管理员、NPM 网络和证书后运行 `docker compose up -d --build`。部署前需要服务器入站/出站 25 可用并完成 MX、PTR、SPF、DKIM、DMARC 配置。
 
-GitHub Actions 在 `main` 检查通过后发布 `ghcr.io/lsh-okok/cloud-mail:main` 和 `:sha-<完整40位提交号>` 镜像（`linux/amd64`），不自动更新运行中的服务器。一键管理主节点与只读节点默认拉取最新已发布的 `main` 并按摘要固定版本，无需服务器编译；重复执行保留原版本和数据，不执行升级。服务器须访问 GitHub、GHCR，不提供源码或离线镜像回退。管理一键安装不含 MX 收发；完整邮件服务仍按文档配置 Compose。
+GitHub Actions 在 `main` 检查通过后发布统一镜像 `ghcr.io/lsh-okok/cloud-mail:main`、`:latest` 和 `:sha-<完整40位提交号>`（`linux/amd64`），不自动更新运行中的服务器。一键管理主节点与只读节点默认拉取最新已发布的 `main` 并按摘要固定版本，无需服务器编译；重复执行保留原版本和数据，不执行升级。服务器须访问 GitHub、GHCR，不提供源码或离线镜像回退。管理主节点与只读节点默认 `MAIL_ENABLED=false`；管理主节点启用收发后仍使用同一个容器。完整邮件 Compose 默认启用邮件服务，详见部署文档。
 
 邮箱后缀可在管理员后台的「邮箱域名」中新增、设为默认或停止创建，保存立即生效，无需修改代码或重建应用。现有账号与邮箱地址保持不变；公网收发仍需配置 DNS 和邮件服务，详见[邮箱域名管理](doc/mail-domains.md)。
 
@@ -67,7 +67,7 @@ GitHub Actions 在 `main` 检查通过后发布 `ghcr.io/lsh-okok/cloud-mail:mai
 
 ## 功能介绍
 
-- **🐳 自托管部署**：Docker Compose 运行应用与邮件服务，数据、附件、队列和 DKIM 密钥保存在持久卷
+- **🐳 自托管部署**：同一 Docker 镜像和容器运行应用与邮件服务，数据、附件、队列、日志和 DKIM 密钥保存在持久卷
 
 - **💻 响应式设计**：响应式布局自动适配PC和大部分手机端浏览器
 
@@ -119,8 +119,8 @@ GitHub Actions 在 `main` 检查通过后发布 `ghcr.io/lsh-okok/cloud-mail:mai
 
 ```
 cloud-mail
-├── Dockerfile                     # Node 应用镜像
-├── docker-compose.yml             # app + Postfix/OpenDKIM 与 NPM 网络
+├── Dockerfile                     # Node + Postfix/OpenDKIM 统一镜像
+├── docker-compose.yml             # 单 app 容器与 NPM 网络
 ├── docker                         # MTA 配置、备份恢复脚本
 ├── doc/server-deployment.md        # DNS、证书、部署及收发演练
 ├── mail-worker                    # Node 后端（保留原业务层）

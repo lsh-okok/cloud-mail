@@ -59,3 +59,18 @@ Windows 终端的 Ctrl+C 未传递给预览进程，本次使用终止该测试�
 - 配置真实 Telegram、Webhook、OAuth 和可选 Turnstile 凭据后的联调。
 
 生产部署与操作步骤见 [server-deployment.md](server-deployment.md)，配置模板见 [../.env.example](../.env.example)。
+
+## 2026-11-16：统一镜像与单容器变更
+
+以上 2026-11-13 结果保留为当时应用、邮件双容器的历史记录。本节记录改为同一镜像、同一容器运行 Node.js、Postfix 和 OpenDKIM 后的验证情况，不将旧容器演练视为新架构的通过结果。
+
+当前 Compose 仅包含 `app` 服务，设置 `MAIL_ENABLED=true`，复用原 `app_data`、`mail_spool`、`mail_logs`、`dkim_keys` 四个卷；管理安装与只读副本显式关闭邮件。SMTP 587、LMTP 2525、策略 10040 和域名查询 10041 均限制为同容器回环通信，公网邮件仅发布 25。统一健康检查同时检查 HTTP 就绪和启用后的邮件服务。
+
+本轮本地检查结果：
+
+- 核心相关测试 5 个文件、63 项通过；统一容器、存储和恢复相关测试 3 个文件、27 项通过。两组包含重叠测试，数量不累加为总数。
+- 后端生产构建、Shell `sh -n` 与邮件探针 `node --check` 通过。
+- YAML 解析核对 Compose 单个 app 服务、四个原持久卷，以及 CI 仅发布一个统一镜像通过。
+- 更新后的部署文档本地链接与 `git diff --check` 通过；旧部署、旧验证记录保留。
+
+记录时统一镜像的 GitHub Actions 与真实 Docker 收发演练尚未完成，不能据此确认新镜像已发布或服务器已经迁移。仍需本轮容器演练验证 STARTTLS、拒绝中继、邮件入库、发信状态、队列恢复及备份恢复；真实 DNS、NPM 证书和公网外部邮箱验证仍按上文正式上线要求执行。

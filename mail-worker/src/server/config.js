@@ -22,6 +22,11 @@ export function loadConfig(source = process.env) {
   const nodeRole = source.NODE_ROLE || 'primary';
   if (!['primary', 'replica'].includes(nodeRole)) throw new Error('NODE_ROLE must be primary or replica');
   const replica = nodeRole === 'replica';
+  if (source.MAIL_ENABLED && !['true', 'false'].includes(source.MAIL_ENABLED)) throw new Error('MAIL_ENABLED must be true or false');
+  const mailEnabled = source.MAIL_ENABLED === 'true';
+  if (replica && mailEnabled) throw new Error('A read-only replica cannot enable the mail service');
+  const internalHost = source.MAIL_INTERNAL_HOST || (mailEnabled ? '127.0.0.1' : '0.0.0.0');
+  if (!['127.0.0.1', '0.0.0.0'].includes(internalHost)) throw new Error('MAIL_INTERNAL_HOST must be 127.0.0.1 or 0.0.0.0');
   const domain = [...new Set((source.MAIL_DOMAINS || (replica ? 'replica.invalid' : '')).split(',').filter(Boolean).map(hostname))];
   if (!domain.length) throw new Error('MAIL_DOMAINS is required');
   const mailHost = hostname(source.MAIL_HOST || `mail.${domain[0]}`);
@@ -85,7 +90,7 @@ export function loadConfig(source = process.env) {
     domain, admin: replica ? '' : admin, admin_password: replica ? undefined : source.ADMIN_PASSWORD,
     jwt_secret: source.JWT_SECRET, app_url: appUrl.origin, base_path: basePath, public_base_url: publicBase,
     data_keys: dataKeys, data_key_id: dataKeyId,
-    node_role: nodeRole, node_primary_url: nodePrimaryUrl, node_id: nodeId,
+    node_role: nodeRole, mail_enabled: mailEnabled, node_primary_url: nodePrimaryUrl, node_id: nodeId,
     node_credential: nodeCredential, node_allow_insecure_http: nodeAllowInsecureHttp,
     node_public_ip: nodePublicIp,
     node_upstream_timeout: nodeUpstreamTimeout, verificationSmtpAllowCidrs,
@@ -96,17 +101,17 @@ export function loadConfig(source = process.env) {
     dataDir, sqlitePath, objectsDir,
     staticDir: resolve(source.STATIC_DIR || './dist'),
     smtp: {
-      host: source.SMTP_HOST || 'mail', port: port(source.SMTP_PORT, 587, 'SMTP_PORT'),
+      host: source.SMTP_HOST || '127.0.0.1', port: port(source.SMTP_PORT, 587, 'SMTP_PORT'),
       secure: source.SMTP_SECURE === 'true', requireTLS: source.SMTP_REQUIRE_TLS === 'true',
-      ...(source.SMTP_USER ? { auth: { user: source.SMTP_USER, pass: source.SMTP_PASSWORD || '' } } : {}),
+      ...(!mailEnabled && source.SMTP_USER ? { auth: { user: source.SMTP_USER, pass: source.SMTP_PASSWORD || '' } } : {}),
       maxMessageBytes,
     },
     server: {
       hostname: mailHost, bounceDomain: domain[0],
-      trustedMailSubnet: source.MAIL_NETWORK_SUBNET || '172.30.89.0/24',
-      lmtpHost: '0.0.0.0', lmtpPort: port(source.LMTP_PORT, 2525, 'LMTP_PORT'),
-      policyHost: '0.0.0.0', policyPort: port(source.POLICY_PORT, 10040, 'POLICY_PORT'),
-      domainMapHost: '0.0.0.0', domainMapPort: port(source.DOMAIN_MAP_PORT, 10041, 'DOMAIN_MAP_PORT'),
+      trustedMailSubnet: source.MAIL_NETWORK_SUBNET || (mailEnabled ? '127.0.0.0/8' : '172.30.89.0/24'),
+      lmtpHost: internalHost, lmtpPort: port(source.LMTP_PORT, 2525, 'LMTP_PORT'),
+      policyHost: internalHost, policyPort: port(source.POLICY_PORT, 10040, 'POLICY_PORT'),
+      domainMapHost: internalHost, domainMapPort: port(source.DOMAIN_MAP_PORT, 10041, 'DOMAIN_MAP_PORT'),
       mailLogPath: source.MAIL_LOG_PATH || '/var/log/postfix/postfix.log',
     },
   };

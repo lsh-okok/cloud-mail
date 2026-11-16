@@ -13,13 +13,13 @@ test -f "$backup_dir/app/manifest.json" && test -f "$backup_dir/app/cloud-mail.s
 }
 test -f .env || { echo 'Restore config.env as .env and adjust NPM paths/network first' >&2; exit 1; }
 docker compose config --quiet
-docker compose stop mail app
+docker compose stop app
 docker compose run --rm --no-deps -T --entrypoint sh app -c \
     'test -z "$(find /data -mindepth 1 -maxdepth 1 -print -quit)"' || {
     echo 'Application volume is not empty. Use a fresh COMPOSE_PROJECT_NAME; existing data has been preserved.' >&2
     exit 1
 }
-docker compose run --rm --no-deps -T --entrypoint sh mail -c \
+docker compose run --rm --no-deps -T --entrypoint sh app -c \
     'test -z "$(find /var/spool/postfix -mindepth 1 -maxdepth 1 -print -quit)" && test -z "$(find /etc/opendkim/keys -mindepth 1 -maxdepth 1 -print -quit)" && test -z "$(find /var/log/postfix -mindepth 1 -maxdepth 1 -print -quit)"' || {
     echo 'Mail spool, DKIM or log volume is not empty. Restore only into new volumes.' >&2
     exit 1
@@ -27,11 +27,11 @@ docker compose run --rm --no-deps -T --entrypoint sh mail -c \
 docker compose run --rm --no-deps -T --entrypoint sh \
     -v "$backup_dir/app:/backup:ro" app -c \
     'node mail-worker/server-dist/cli.cjs restore /backup && chown -R node:node /data'
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /var/spool/postfix -xzf - < "$backup_dir/mail-spool.tar.gz"
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /etc/opendkim/keys -xzf - < "$backup_dir/dkim-keys.tar.gz"
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /var/log/postfix -xzf - < "$backup_dir/mail-logs.tar.gz"
-docker compose up -d app mail
+docker compose up -d app
 echo 'Restore completed. Check docker compose ps, logs, DNS and external delivery before switching production traffic.'

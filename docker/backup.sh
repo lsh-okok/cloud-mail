@@ -9,19 +9,19 @@ test -f .env || { echo 'Run this script from the repository root with a configur
 docker compose config --quiet
 mkdir -p "$backup_dir"
 cp .env "$backup_dir/config.env"
-docker compose stop mail app
-resume() { docker compose up -d app mail; }
+docker compose stop app
+resume() { docker compose up -d app; }
 trap resume EXIT
 trap 'exit 130' INT
 trap 'exit 143' HUP TERM
 docker compose run --rm --no-deps -T --entrypoint node \
     -v "$backup_dir:/backup" app \
     mail-worker/server-dist/cli.cjs backup /backup/app
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /var/spool/postfix -czf - . > "$backup_dir/mail-spool.tar.gz"
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /etc/opendkim/keys -czf - . > "$backup_dir/dkim-keys.tar.gz"
-docker compose run --rm --no-deps -T --entrypoint tar mail \
+docker compose run --rm --no-deps -T --entrypoint tar app \
     -C /var/log/postfix -czf - . > "$backup_dir/mail-logs.tar.gz"
 docker compose images --format json > "$backup_dir/images.json"
 printf 'Cloud Mail backup completed at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$backup_dir/COMPLETE"

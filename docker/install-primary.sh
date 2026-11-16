@@ -17,11 +17,12 @@ usage() {
   --mail-domain NAME  邮箱域，默认 cloudmail.test
   --admin-email EMAIL 管理员邮箱，默认 admin@邮箱域
   --image IMAGE       指定官方 main、sha-提交号或 sha256 摘要镜像；始终从 GHCR 拉取
-  --reinstall         清空此实例的账号、邮件和配置后重新安装，不备份；未指定的站点参数沿用安装记录
+  --reinstall         清空未启用邮件实例的账号、邮件和配置后重装，不备份；沿用未指定站点参数
   --help              显示帮助
 默认拉取 GitHub main 最新通过检查的镜像，需要服务器可访问 ghcr.io。
 自动安装 Docker、生成独立密钥和管理员密码、启动主节点管理服务。
 默认提供管理、邮箱来源、链接及节点管理；MX/Postfix 收发尚未启用。
+同一镜像已内置 Postfix/DKIM；随后可执行 enable-mail.sh 重建现有容器并启用邮件。
 同目录重复执行只启动原实例并保留配置和数据，不执行升级。
 HELP
 }
@@ -144,6 +145,11 @@ restore_parameter() {
 
 if [[ $primary_reinstall == true && ( -e $primary_state || -L $primary_state ) ]]; then
   [[ -f $primary_state && ! -L $primary_state && -f $primary_env && ! -L $primary_env ]] || fail '无法确认重装实例的配置和安装记录，已停止。'
+  [[ $(read_state FORMAT) != 3 ]] || fail '此实例已合并邮件服务，--reinstall 不会清理队列及DKIM；请先备份并按邮件服务恢复流程操作，拒绝部分清空。'
+  if docker container inspect "$primary_name-mail" >/dev/null 2>&1; then fail '此实例存在原邮件容器；请先备份并按邮件服务恢复流程操作，拒绝只清空应用数据。'; fi
+  for primary_mail_volume in "$primary_name-mail-spool" "$primary_name-dkim" "$primary_name-mail-logs"; do
+    if docker volume inspect "$primary_mail_volume" >/dev/null 2>&1; then fail '此实例存在邮件队列或DKIM数据卷，拒绝部分清空；请先备份并按邮件服务恢复流程操作。'; fi
+  done
   [[ $(read_state INSTALL_DIR) == "$primary_dir" && $(read_state CONTAINER_NAME) == "$primary_name" ]] || fail '重装目录或容器名与安装记录不一致，已停止。'
   primary_reinstall_instance=$(read_state INSTANCE_ID)
   [[ $primary_reinstall_instance =~ ^[0-9a-f]{32}$ ]] || fail '重装实例的安装身份无效，已停止。'
@@ -157,7 +163,7 @@ if [[ $primary_reinstall == true && ( -e $primary_state || -L $primary_state ) ]
 elif [[ -e $primary_state || -L $primary_state ]]; then
   [[ -f $primary_state && ! -L $primary_state && -f $primary_env && ! -L $primary_env ]] || fail '已有安装状态或配置异常，已停止。'
   primary_state_format=$(read_state FORMAT)
-  [[ $primary_state_format == 1 || $primary_state_format == 2 ]] || fail '不支持该安装状态版本。'
+  [[ $primary_state_format == 1 || $primary_state_format == 2 || $primary_state_format == 3 ]] || fail '不支持该安装状态版本。'
   [[ $(read_state INSTALL_DIR) == "$primary_dir" ]] || fail '已有安装目录与状态记录不一致。'
   restore_parameter CONTAINER_NAME primary_name name
   restore_parameter HTTP_PORT primary_port port
@@ -168,7 +174,7 @@ elif [[ -e $primary_state || -L $primary_state ]]; then
   if [[ ${primary_explicit[image]:-false} == true ]]; then
     [[ $(read_state SOURCE_MODE) == registry && $(read_state SOURCE_VALUE) == "$primary_image_ref" ]] || fail '本次镜像与已有安装不同，已停止；安装脚本不执行升级。'
   fi
-  if [[ $primary_state_format == 2 ]]; then
+  if [[ $primary_state_format == 2 || $primary_state_format == 3 ]]; then
     primary_image_digest=$(read_state IMAGE_DIGEST)
     primary_image_revision=$(read_state IMAGE_REVISION)
     [[ $primary_image_digest =~ ^ghcr\.io/lsh-okok/cloud-mail@sha256:[0-9a-f]{64}$ && $primary_image_revision =~ ^[0-9a-f]{40}$ ]] || fail '已有安装的镜像版本记录无效。'
@@ -178,6 +184,11 @@ elif [[ -e $primary_state || -L $primary_state ]]; then
   [[ $primary_instance_id =~ ^[0-9a-f]{32}$ && $primary_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || fail '已有安装身份或镜像记录无效。'
   primary_env_checksum=$(sha256sum "$primary_env"); primary_env_checksum=${primary_env_checksum%% *}
   [[ $primary_env_checksum == "$(read_state ENV_SHA256)" ]] || fail '已有配置已改变，已停止；请核对配置后通过 Docker 运维已有实例。'
+  if [[ $primary_state_format == 3 ]]; then
+    [[ -f $primary_dir/mail.env && ! -L $primary_dir/mail.env ]] || fail '已启用邮件的配置缺失，已停止；请保留现有容器和数据。'
+    primary_mail_checksum=$(sha256sum "$primary_dir/mail.env"); primary_mail_checksum=${primary_mail_checksum%% *}
+    [[ $primary_mail_checksum == "$(read_state MAIL_ENV_SHA256)" ]] || fail '邮件运行配置与安装记录不一致，已停止。'
+  fi
   primary_first_install=false
 else
   if [[ -d $primary_dir ]]; then
@@ -331,13 +342,14 @@ else
     if [[ $primary_remove_volume == true ]]; then docker volume rm "$primary_volume" >/dev/null; fi
     # Remove only installer-owned configuration; other files in this directory
     # may include the running script or unrelated user files.
-    rm -f -- "$primary_env" "$primary_state" "$primary_dir/.install-state.tmp"
+    rm -f -- "$primary_env" "$primary_state" "$primary_dir/.install-state.tmp" "$primary_dir/mail.env"
   fi
   mkdir -p "$primary_dir"
   chmod 700 "$primary_dir"
   cat > "$primary_env" <<ENV
 NODE_ENV=production
 NODE_ROLE=primary
+MAIL_ENABLED=false
 TZ=UTC
 MAIL_DOMAINS=$primary_mail_domain
 MAIL_HOST=mx.$primary_mail_domain
@@ -355,7 +367,7 @@ OBJECTS_DIR=/data/objects
 STATIC_DIR=/app/mail-worker/dist
 LMTP_PORT=2525
 POLICY_PORT=10040
-SMTP_HOST=mail
+SMTP_HOST=127.0.0.1
 SMTP_PORT=587
 SMTP_REQUIRE_TLS=false
 TRUSTED_PROXIES=
@@ -390,19 +402,26 @@ STATE
 fi
 
 printf '%s\n' '正在等待主节点就绪（最多 180 秒）…'
+primary_check_ready() {
+  if [[ ${primary_state_format:-} == 3 ]]; then
+    docker exec "$primary_container" /usr/local/bin/cloud-mail-healthcheck
+  else
+    docker exec "$primary_container" node -e 'fetch("http://127.0.0.1:3000/health/ready",{signal:AbortSignal.timeout(Number(process.argv[1]))}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))' "$primary_timeout"
+  fi
+}
 primary_deadline=$(( $(date +%s) + 180 ))
 while (( $(date +%s) < primary_deadline )); do
   primary_remaining=$(( primary_deadline - $(date +%s) ))
   (( primary_remaining > 0 )) || break
   primary_timeout=$(( primary_remaining * 1000 ))
   if (( primary_timeout > 4000 )); then primary_timeout=4000; fi
-  if docker exec "$primary_container" node -e 'fetch("http://127.0.0.1:3000/health/ready",{signal:AbortSignal.timeout(Number(process.argv[1]))}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))' "$primary_timeout" >/dev/null 2>&1; then
+  if primary_check_ready >/dev/null 2>&1; then
     printf '\n主节点安装成功\n访问地址：%s\n管理员邮箱：%s\n' "$primary_app_url" "$primary_admin_email"
     if [[ $primary_first_install == true ]]; then printf '管理员初始密码：%s\n' "$primary_admin_password"; fi
     printf '镜像 ID：%s\n' "$primary_image_id"
     if [[ -n $primary_image_digest ]]; then printf '镜像摘要：%s\nGitHub 提交：%s\n' "$primary_image_digest" "$primary_image_revision"; fi
     printf '配置文件：%s\n容器名称：%s\n数据卷：%s\n' "$primary_env" "$primary_container" "$primary_volume"
-    printf '%s\n' '已提供主节点管理服务，可在「节点管理」新增并部署只读节点。' '此安装默认未启用 MX/Postfix；公网收信可使用 cloud-mail-primary/enable-mail.sh，步骤见服务器部署文档。'
+    printf '%s\n' '已提供主节点管理服务，可在「节点管理」新增并部署只读节点。' '同一镜像已内置邮件服务；首次安装默认未启用 MX/Postfix，公网收信可执行 enable-mail.sh 重建现有容器并启用，步骤见服务器部署文档。'
     exit 0
   fi
   [[ $(docker container inspect --format '{{.State.Running}}' "$primary_container") == true ]] || fail "主节点容器已停止，请执行 docker logs $primary_container 排查；配置和数据已保留。"

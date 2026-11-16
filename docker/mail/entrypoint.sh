@@ -7,7 +7,7 @@ umask 027
 : "${SMTP_TLS_CERT_FILE:?SMTP_TLS_CERT_FILE is required}"
 : "${SMTP_TLS_KEY_FILE:?SMTP_TLS_KEY_FILE is required}"
 DKIM_SELECTOR=${DKIM_SELECTOR:-mail}
-MAIL_NETWORK_SUBNET=${MAIL_NETWORK_SUBNET:-172.30.89.0/24}
+MAIL_NETWORK_SUBNET=127.0.0.0/8
 MAX_MESSAGE_BYTES=${MAX_MESSAGE_BYTES:-26214400}
 
 # Restrict values before writing Postfix/OpenDKIM configuration files.
@@ -90,13 +90,13 @@ postconf -e 'inet_protocols = ipv4'
 postconf -e "mynetworks = 127.0.0.0/8, $MAIL_NETWORK_SUBNET"
 # Routing follows the persisted domain registry immediately. Keep MAIL_DOMAINS
 # above for bootstrap DKIM keys; adding signing keys remains deployment-managed.
-postconf -e 'virtual_mailbox_domains = socketmap:inet:app:10041:domains'
-postconf -e 'virtual_transport = lmtp:inet:app:2525'
+postconf -e 'virtual_mailbox_domains = socketmap:inet:127.0.0.1:10041:domains'
+postconf -e 'virtual_transport = lmtp:inet:127.0.0.1:2525'
 postconf -e 'local_transport = error:local delivery disabled'
 postconf -e 'relay_domains ='
 postconf -e 'relayhost ='
 postconf -e 'smtpd_relay_restrictions = reject_unauth_destination'
-postconf -e 'smtpd_recipient_restrictions = reject_unauth_destination, check_policy_service inet:app:10040'
+postconf -e 'smtpd_recipient_restrictions = reject_unauth_destination, check_policy_service inet:127.0.0.1:10040'
 postconf -e 'smtpd_reject_unlisted_recipient = no'
 postconf -e 'smtpd_policy_service_default_action = 451 4.3.0 Recipient service temporarily unavailable'
 postconf -e 'smtpd_policy_service_timeout = 10s'
@@ -126,11 +126,11 @@ postconf -e 'biff = no'
 postconf -e 'append_dot_mydomain = no'
 postconf -e 'readme_directory = no'
 
-# Public SMTP never trusts mynetworks for relaying. Only this un-published
-# submission listener accepts relaying from the isolated Compose mail subnet.
+# Public SMTP never trusts mynetworks for relaying. Only the loopback-only
+# submission listener accepts messages from the application in this container.
 cat > /etc/postfix/master.cf <<'EOF'
 smtp      inet  n       -       n       -       -       smtpd
-submission inet n       -       n       -       -       smtpd
+127.0.0.1:587 inet n    -       n       -       -       smtpd
   -o syslog_name=postfix/submission
   -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_relay_restrictions=permit_mynetworks,reject
@@ -167,4 +167,7 @@ EOF
 # command creates missing queue directories with their required ownership.
 # set-permissions also requires optional manpages removed by the slim base image.
 postfix check
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/mail.conf
+if [ "${1:-}" != --configure-only ]; then
+    echo 'Mail configuration belongs to the combined Cloud Mail entrypoint' >&2
+    exit 1
+fi

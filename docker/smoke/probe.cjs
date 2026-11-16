@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const net = require('node:net');
+const { networkInterfaces } = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { once } = require('node:events');
@@ -60,7 +61,37 @@ async function startSink() {
     fs.writeFileSync(path.join(sinkDirectory, 'error'), error.message);
     process.exitCode = 1;
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(2526, '0.0.0.0', resolve); });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(2526, '127.0.0.1', resolve); });
+}
+
+async function canConnect(host, port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host, port });
+    const finish = value => { socket.destroy(); resolve(value); };
+    socket.setTimeout(2000, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', error => {
+      if (['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT'].includes(error.code)) finish(false);
+      else { socket.destroy(); reject(error); }
+    });
+  });
+}
+
+async function verifyCombinedRuntime() {
+  assert.equal(process.env.MAIL_ENABLED, 'true', 'Integration smoke must enable the embedded mail services');
+  assert.equal(process.env.SMTP_HOST, '127.0.0.1', 'Application submission must stay inside the combined container');
+  for (const port of [25, 587, 2525, 10040, 10041]) {
+    assert.equal(await canConnect('127.0.0.1', port), true, `Combined mail endpoint ${port} is unavailable`);
+  }
+  const addresses = Object.values(networkInterfaces()).flat().filter(address => address && !address.internal && address.family === 'IPv4');
+  assert.ok(addresses.length, 'Container has no network interface to check private protocol isolation');
+  for (const { address } of addresses) {
+    assert.equal(await canConnect(address, 25), true, 'Public SMTP must be reachable on the container interface');
+    for (const port of [587, 2525, 10040, 10041]) {
+      assert.equal(await canConnect(address, port), false, `Internal endpoint ${port} is exposed on ${address}`);
+    }
+  }
+  console.info('One container provides SMTP and application services with loopback-only internal protocols');
 }
 
 async function submitThroughApi(subject) {
@@ -144,7 +175,7 @@ async function verifyAttachment(db, email, offline) {
 }
 
 async function smtp(mode, subject, recipient = process.env.ADMIN_EMAIL) {
-  const socket = net.createConnection({ host: 'mail', port: 25 });
+  const socket = net.createConnection({ host: '127.0.0.1', port: 25 });
   const responses = [], waiting = [];
   let buffer = '', lines = [];
   socket.setTimeout(mode === 'unavailable' ? 30000 : 15000, () => socket.destroy(new Error('SMTP response timed out')));
@@ -232,7 +263,7 @@ async function dynamicDomain(action) {
     await request('/admin/domains', 'POST', { domain });
     const batch = await request('/admin/mailboxes/batch', 'POST', { emails: [email] });
     assert.equal(batch.created, 1, 'The dynamically added domain must allow creating its first mailbox');
-    console.info('Created a receiving domain absent from MAIL_DOMAINS without restarting either container');
+    console.info('Created a receiving domain absent from MAIL_DOMAINS without restarting the combined container');
   } else {
     await request(`/admin/domains/${domain}`, 'PUT', { enabled: false });
     console.info('Stopped creating mailboxes on the new domain; existing mailboxes must still receive');
@@ -257,6 +288,8 @@ async function main() {
     assert.match(asset.headers.get('content-type'), /javascript/i);
     assert.ok((await asset.text()).length > 20);
     assert.equal((await fetch(origin + '/assets/__cloud_mail_smoke_missing__.js')).status, 404);
+  } else if (mode === 'combined-runtime') {
+    await verifyCombinedRuntime();
   } else if (mode === 'sink') {
     await startSink();
   } else if (mode === 'sink-ready') {
@@ -276,7 +309,7 @@ async function main() {
   } else if (mode === 'tls' || mode === 'submission') {
     const nodemailer = require('/app/mail-worker/node_modules/nodemailer');
     const transport = nodemailer.createTransport({
-      host: 'mail', port: mode === 'tls' ? 25 : 587, secure: false,
+      host: '127.0.0.1', port: mode === 'tls' ? 25 : 587, secure: false,
       requireTLS: mode === 'tls', ignoreTLS: mode === 'submission',
       connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 15000,
       tls: { servername: process.env.MAIL_HOST, ca: fs.readFileSync('/smoke/certs/live/smoke/fullchain.pem') },
@@ -312,7 +345,7 @@ async function main() {
   } else if (['relay', 'message', 'unknown', 'unavailable'].includes(mode)) {
     await smtp(mode, subject);
   } else {
-    throw new Error('Expected health, tls, submission, stored, absent, relay, unknown, unavailable or message probe');
+    throw new Error('Expected health, combined-runtime, tls, submission, stored, absent, relay, unknown, unavailable or message probe');
   }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });
